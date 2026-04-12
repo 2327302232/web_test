@@ -3,48 +3,76 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>dkrx relay demo</title>
+  <title>骑行头盔 - 用户站</title>
   <style>
-    body { font-family: system-ui, sans-serif; padding: 16px; max-width: 720px; margin: 0 auto; }
-    button { padding: 10px 14px; margin: 6px 0; }
-    pre { background:#111; color:#0f0; padding:12px; border-radius:8px; overflow:auto; }
-    input { width: 100%; padding: 10px; margin: 6px 0 10px; }
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100vh; width: 100vw; }
+    .panel {
+      position: fixed; left: 12px; top: 12px;
+      background: rgba(255,255,255,0.95);
+      padding: 10px 12px; border-radius: 10px;
+      font-family: system-ui, sans-serif; font-size: 14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+      max-width: 86vw;
+    }
+    .row { margin: 6px 0; }
+    button { padding: 8px 10px; }
+    code { user-select: all; }
   </style>
+
+  <!-- 高德地图 JS API -->
+  <script>
+    window._AMapSecurityConfig = {
+      // 如果你的高德控制台给了 “安全密钥（JSAPI安全密钥）”，再填到这里
+      securityJsCode: "44753867fab57990a91227566e23766d"
+    };
+  </script>
+  <script src="https://webapi.amap.com/maps?v=2.0&key=f7922f62f89a287b3b34ae97e383a1e8"></script>
 </head>
+
 <body>
-  <h2>手机 → Worker → 电脑（中转测试）</h2>
+  <div id="map"></div>
 
-  <h3>手机端：发送</h3>
-  <input id="msg" placeholder="输入要发给电脑的内容" />
-  <button id="send">发送到电脑</button>
-  <div id="sendStatus"></div>
-
-  <h3>电脑端：接收（每 1 秒刷新）</h3>
-  <pre id="recv">等待消息…</pre>
+  <div class="panel">
+    <div class="row"><strong>骑行头盔用户站（高德地图）</strong></div>
+    <div class="row">状态：<span id="status">加载中…</span></div>
+    <div class="row">坐标：<code id="pos">-</code></div>
+    <div class="row">
+      <button id="loc">定位到我</button>
+    </div>
+  </div>
 
   <script>
-    const API = "https://api.dkrx.dpdns.org";
+    const statusEl = document.getElementById("status");
+    const posEl = document.getElementById("pos");
 
-    async function poll() {
-      try {
-        const r = await fetch(API + "/poll", { cache: "no-store" });
-        const data = await r.json();
-        document.getElementById("recv").textContent =
-          JSON.stringify(data, null, 2);
-      } catch (e) {
-        document.getElementById("recv").textContent = "poll error: " + e;
-      }
-    }
+    const map = new AMap.Map("map", {
+      zoom: 14,
+      center: [116.397428, 39.90923] // 默认北京天安门
+    });
 
-    document.getElementById("send").onclick = async () => {
-      const text = document.getElementById("msg").value || ("hello @ " + new Date().toISOString());
-      const r = await fetch(API + "/push", { method: "POST", body: text });
-      document.getElementById("sendStatus").textContent =
-        "send: " + r.status + " " + (await r.text());
+    const marker = new AMap.Marker({ position: map.getCenter() });
+    map.add(marker);
+    statusEl.textContent = "地图已加载";
+
+    document.getElementById("loc").onclick = () => {
+      statusEl.textContent = "请求定位…";
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          const lng = p.coords.longitude;
+          const lat = p.coords.latitude;
+          posEl.textContent = `${lng.toFixed(6)}, ${lat.toFixed(6)}`;
+          const ll = [lng, lat];
+          marker.setPosition(ll);
+          map.setCenter(ll);
+          statusEl.textContent = "定位成功";
+        },
+        (e) => {
+          statusEl.textContent = "定位失败：" + e.message;
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
+      );
     };
-
-    poll();
-    setInterval(poll, 1000);
   </script>
 </body>
 </html>
