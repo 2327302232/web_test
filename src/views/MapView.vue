@@ -15,6 +15,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { loadAmapSdk, initMap, createMarker, initGeolocation } from '../utils/amap.js'
+import { useAppStore } from '../stores'
 
 const status = ref('加载中…')
 const posText = ref('-')
@@ -156,7 +157,15 @@ onMounted(async () => {
     marker = createMarker(map, map.getCenter())
 
     geolocation = await initGeolocation()
-    status.value = '地图已加载'
+      status.value = '地图已加载'
+
+      // Pinia 非侵入式验证（仅用于确认 store 可用，不改 UI）
+      try {
+        const appStore = useAppStore()
+        console.log('[pinia]', appStore.appName, appStore.upperName)
+      } catch (e) {
+        console.warn('[pinia] store init failed', e)
+      }
   } catch (err) {
     status.value = '错误：' + (err?.message || String(err))
     console.error(err)

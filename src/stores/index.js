@@ -12,3 +12,6 @@
  */
 
 export const storesReady = false
+
+// Re-export all stores for convenient imports
+export * from './app'
