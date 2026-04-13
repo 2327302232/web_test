@@ -1,110 +1,16 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>骑行头盔 - 用户站（高德地图）</title>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>web_test</title>
 
-  <style>
-    html, body { height: 100%; margin: 0; }
-    #map { height: 100vh; width: 100vw; }
-
-    .panel {
-      position: fixed; left: 12px; top: 12px;
-      background: rgba(255,255,255,0.96);
-      padding: 10px 12px; border-radius: 10px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      font-size: 14px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
-      max-width: 92vw;
-    }
-    .row { margin: 6px 0; }
-    button { padding: 8px 10px; }
-    code { user-select: all; }
-  </style>
-
-  <!-- 1) 先配置高德 JSAPI 安全密钥 -->
-  <script>
-    window._AMapSecurityConfig = {
-      securityJsCode: "44753867fab57990a91227566e23766d"
-    };
-  </script>
-
-  <!-- 2) 再加载高德地图 JS API（Web Key） -->
-  <script src="https://webapi.amap.com/maps?v=2.0&key=f7922f62f89a287b3b34ae97e383a1e8"></script>
-</head>
-
-<body>
-  <div id="map"></div>
-
-  <div class="panel">
-    <div class="row"><strong>骑行头盔用户站（高德地图）</strong></div>
-    <div class="row">状态：<span id="status">加载中…</span></div>
-    <div class="row">坐标：<code id="pos">-</code></div>
-    <div class="row">精度：<code id="acc">-</code></div>
-    <div class="row">
-      <button id="loc">定位到我（高德）</button>
-    </div>
-    <div class="row" style="font-size:12px;color:#555;">
-      提示：首次会弹出定位权限；尽量在室外/靠窗测试，精度会更好。
-    </div>
-  </div>
-
-  <script>
-    const statusEl = document.getElementById("status");
-    const posEl = document.getElementById("pos");
-    const accEl = document.getElementById("acc");
-
-    // 默认中心点：北京
-    const map = new AMap.Map("map", {
-      zoom: 14,
-      center: [116.397428, 39.90923]
-    });
-
-    const marker = new AMap.Marker({ position: map.getCenter() });
-    map.add(marker);
-
-    statusEl.textContent = "地图已加载";
-
-    // 使用高德定位插件（比直接 navigator.geolocation 更适合配合高德地图）
-    AMap.plugin("AMap.Geolocation", function () {
-      const geolocation = new AMap.Geolocation({
-        enableHighAccuracy: true,   // 尽量高精度
-        timeout: 10000,
-        maximumAge: 0,
-        convert: true,              // 转高德坐标
-        showButton: false,
-        showMarker: false,
-        showCircle: false,
-        zoomToAccuracy: true
-      });
-
-      document.getElementById("loc").onclick = () => {
-        statusEl.textContent = "高德定位中…（等待权限/信号）";
-        accEl.textContent = "-";
-
-        geolocation.getCurrentPosition((status, result) => {
-          if (status === "complete") {
-            const lng = result.position.lng;
-            const lat = result.position.lat;
-            const acc = result.accuracy;
-
-            posEl.textContent = `${lng.toFixed(6)}, ${lat.toFixed(6)}`;
-            accEl.textContent = (acc != null) ? (Math.round(acc) + " m") : "未知";
-
-            const ll = [lng, lat];
-            marker.setPosition(ll);
-            map.setCenter(ll);
-            map.setZoom(17);
-
-            statusEl.textContent = "定位成功";
-          } else {
-            // result.message 通常会包含原因（权限拒绝、超时等）
-            statusEl.textContent = "定位失败：" + (result && result.message ? result.message : "未知错误");
-          }
-        });
-      };
-    });
-  </script>
-</body>
+    <!-- AMap SDK will be loaded dynamically in Vue; keep index minimal -->
+    <script type="module" src="/src/main.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CRhgJaqQ.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
 </html>
