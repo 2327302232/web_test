@@ -24,16 +24,18 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build
+        env:
+          VITE_AMAP_KEY: ${{ secrets.VITE_AMAP_KEY }}
+          VITE_AMAP_SECURITY_JS_CODE: ${{ secrets.VITE_AMAP_SECURITY_JS_CODE }}
         run: npm run build
 
-      # GitHub Pages 官方推荐：把 dist 作为 artifact 上传
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
