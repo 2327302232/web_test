@@ -3,9 +3,9 @@ import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
   plugins: [vue()],
-  base: "/",
+  base: "/", // 自定义域根路径
   build: {
-    outDir: "docs",
+    outDir: "dist",
     emptyOutDir: true
   }
 });
