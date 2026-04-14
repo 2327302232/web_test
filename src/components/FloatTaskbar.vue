@@ -25,19 +25,19 @@ FloatTaskbar.vue
       <!-- 四个垂直排列的占位按钮（无业务逻辑，仅视觉占位） -->
       <div class="btn-list" aria-hidden="false">
         <!-- 占位按钮 1: helmet (顶部) -->
-        <button class="task-btn" aria-label="helmet">
+        <button class="task-btn" aria-label="helmet" type="button" @click="navigate('/helmet')">
           <img :src="icons[0]" class="task-icon" alt="" />
         </button>
         <!-- 占位按钮 2: me -->
-        <button class="task-btn" aria-label="me">
+        <button class="task-btn" aria-label="me" type="button" @click="navigate('/me')">
           <img :src="icons[1]" class="task-icon" alt="" />
         </button>
         <!-- 占位按钮 3: config -->
-        <button class="task-btn" aria-label="config">
+        <button class="task-btn" aria-label="config" type="button" @click="navigate('/config')">
           <img :src="icons[2]" class="task-icon" alt="" />
         </button>
         <!-- 占位按钮 4: log (底部) -->
-        <button class="task-btn" aria-label="log">
+        <button class="task-btn" aria-label="log" type="button" @click="navigate('/log')">
           <img :src="icons[3]" class="task-icon" alt="" />
         </button>
       </div>
@@ -66,6 +66,15 @@ export default {
     // 切换折叠状态：由顶部的展开/收起按钮触发
     toggle() {
       this.collapsed = !this.collapsed
+    }
+    ,
+    // 跳转到指定路由
+    navigate(path) {
+      if (this.$router && path) {
+        this.$router.push(path)
+      }
+      // 点击后自动收起任务栏（可按需修改）
+      this.collapsed = true
     }
   }
 }
@@ -172,7 +181,7 @@ export default {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: default;
+  cursor: pointer;
   transition: transform 180ms, opacity 180ms;
 }
 
@@ -198,6 +207,15 @@ export default {
 /* 在非常窄的屏幕上调整顶部间距 */
 @media (max-width: 420px) {
   .float-wrapper { top: calc(max(12vh, 64px) + env(safe-area-inset-top)); }
+}
+
+/* 修复圆角 + 模糊 产生的黑线闪边 */
+.panel,
+.toggle-btn {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  outline: 1px solid transparent;
 }
 
 </style>

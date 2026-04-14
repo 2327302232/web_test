@@ -1,13 +1,13 @@
 <template>
   <div class="panel-view" style="padding:16px;">
-    <h1>Panel 页面</h1>
-    <p>占位：这是 /panel 路由的占位页面。后续可以在这里放控制台或独立子页面。</p>
+    <h1>Config 页面</h1>
+    <p>占位：这是 /config 路由的占位页面。后续可放配置与参数管理。</p>
     <router-link to="/">返回地图</router-link>
   </div>
 </template>
 
 <script setup>
-// Panel 页面目前只做占位，暂无脚本逻辑
+// Config 页面目前只做占位，暂无脚本逻辑
 </script>
 
 <style scoped>

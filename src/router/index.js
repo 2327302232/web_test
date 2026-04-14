@@ -7,9 +7,24 @@ const routes = [
     component: () => import('../views/MapView.vue'),
   },
   {
-    path: '/panel',
-    name: 'panel',
-    component: () => import('../views/Panel.vue'),
+    path: '/helmet',
+    name: 'helmet',
+    component: () => import('../views/Helmet.vue'),
+  },
+  {
+    path: '/me',
+    name: 'me',
+    component: () => import('../views/Me.vue'),
+  },
+  {
+    path: '/config',
+    name: 'config',
+    component: () => import('../views/Config.vue'),
+  },
+  {
+    path: '/log',
+    name: 'log',
+    component: () => import('../views/Log.vue'),
   }
 ];
 
