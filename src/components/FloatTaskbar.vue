@@ -85,8 +85,8 @@ export default {
 .float-wrapper {
   /* 容器：定位与安全区处理（外层 wrapper） */
   --ftb-width: 40px; /* 展开后面板宽度（缩小至更紧凑） */
-  --ftb-toggle-w: 20px; /* 展开按钮宽度（细长形的较短边） */
-  --ftb-toggle-h: 25px; /* 展开按钮高度（细长形的较长边） */
+  --ftb-toggle-w: 25px; /* 展开按钮宽度（细长形的较短边） */
+  --ftb-toggle-h: 30px; /* 展开按钮高度（细长形的较长边） */
   --ftb-btn-size: clamp(44px, 12vw, 56px); /* 内部占位按钮尺寸，可响应 */
   --ftb-icon-size: 20px; /* icon 图片尺寸 */
   --ftb-gap: 5px;
@@ -109,8 +109,8 @@ export default {
   /* 折叠/展开按钮样式：现在为细长圆角矩形，靠边展示 */
   width: var(--ftb-toggle-w);
   height: var(--ftb-toggle-h);
-  min-width: 20px;
-  min-height: 25px;
+  min-width: 25px;
+  min-height: 30px;
   margin-left: 4px; /* 尽量靠边 */
   display: inline-flex;
   align-items: center;
