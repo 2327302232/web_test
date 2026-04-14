@@ -125,6 +125,10 @@ export default {
   cursor: pointer;
   transition: transform 220ms, background 200ms, left 200ms;
   z-index: 1220;
+  outline: 1px solid transparent !important;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .toggle-btn:active { transform: scale(0.96); }
