@@ -6,10 +6,12 @@
 import { onMounted, ref } from 'vue'
 import { loadAmapSdk, initMap, createMarker, initGeolocation } from '../utils/amap.js'
 import { useAppStore } from '../stores'
+import { showMessage } from '../composables/useMessage'
 
 const status = ref('加载中…')
 const posText = ref('-')
 const accText = ref('-')
+const isLocating = ref(false)
 
 let map
 let marker
@@ -17,122 +19,165 @@ let geolocation
 
 async function locate() {
   if (!geolocation) {
-    status.value = '定位组件未就绪'
+    const res = await showMessage({
+      title: '定位未就绪',
+      message: '定位组件未就绪，无法定位，请稍后重试。',
+      type: 'warn',
+      showCancel: true,
+      confirmText: '重试',
+      cancelText: '关闭'
+    })
+    if (res && res.action === 'confirm') {
+      // 允许用户重试（可能需要外部重新初始化 geolocation）
+      try { geolocation = await initGeolocation() } catch (e) { /* ignore */ }
+      locate()
+    }
     return
   }
 
-  // Parameters (可微调)
-  const attempts = 3
-  const desiredAccuracy = 10 // meters (目标精度)
-  const initialTimeout = 100 // ms, 首次等待时间，尽量快速展示结果
+  if (isLocating.value) return
+  isLocating.value = true
 
-  status.value = '高德定位中…'
-  accText.value = '-'
+  try {
+    // Parameters (可微调)
+    const attempts = 3
+    const desiredAccuracy = 10 // meters (目标精度)
+    const initialTimeout = 100 // ms, 首次等待时间，尽量快速展示结果
 
-  // Helper: wrap AMap geolocation callback into a promise
-  const getAmapPositionOnce = () => new Promise((resolve) => {
-    try {
-      geolocation.getCurrentPosition((st, result) => resolve({ st, result }))
-    } catch (e) {
-      resolve({ st: 'error', result: e })
-    }
-  })
+    status.value = '高德定位中…'
+    accText.value = '-'
 
-  // Helper: promise with timeout that resolves to null on timeout
-  const withTimeout = (p, ms) => new Promise((resolve) => {
-    let done = false
-    p.then((v) => { if (!done) { done = true; resolve(v) } }).catch((e) => { if (!done) { done = true; resolve({ st: 'error', result: e }) } })
-    setTimeout(() => { if (!done) { done = true; resolve(null) } }, ms)
-  })
+    // Helper: wrap AMap geolocation callback into a promise
+    const getAmapPositionOnce = () => new Promise((resolve) => {
+      try {
+        geolocation.getCurrentPosition((st, result) => resolve({ st, result }))
+      } catch (e) {
+        resolve({ st: 'error', result: e })
+      }
+    })
 
-  // 1) 尝试快速获取首个结果（短超时），尽快显示给用户
-  const initial = await withTimeout(getAmapPositionOnce(), initialTimeout)
-  let best = null
+    // Helper: promise with timeout that resolves to null on timeout
+    const withTimeout = (p, ms) => new Promise((resolve) => {
+      let done = false
+      p.then((v) => { if (!done) { done = true; resolve(v) } }).catch((e) => { if (!done) { done = true; resolve({ st: 'error', result: e }) } })
+      setTimeout(() => { if (!done) { done = true; resolve(null) } }, ms)
+    })
 
-  if (initial && initial.st === 'complete' && initial.result && initial.result.position) {
-    const acc = initial.result.accuracy != null ? initial.result.accuracy : Infinity
-    best = { result: initial.result, acc }
-    const lng = initial.result.position.lng
-    const lat = initial.result.position.lat
-    posText.value = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
-    accText.value = acc !== Infinity ? `${Math.round(acc)} m` : '未知'
-    marker.setPosition([lng, lat])
-    map.setCenter([lng, lat])
-    map.setZoom(17)
+    // 1) 尝试快速获取首个结果（短超时），尽快显示给用户
+    const initial = await withTimeout(getAmapPositionOnce(), initialTimeout)
+    let best = null
 
-    if (acc <= desiredAccuracy) {
-      status.value = '定位成功'
-      return
-    }
+    if (initial && initial.st === 'complete' && initial.result && initial.result.position) {
+      const acc = initial.result.accuracy != null ? initial.result.accuracy : Infinity
+      best = { result: initial.result, acc }
+      const lng = initial.result.position.lng
+      const lat = initial.result.position.lat
+      posText.value = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
+      accText.value = acc !== Infinity ? `${Math.round(acc)} m` : '未知'
+      marker.setPosition([lng, lat])
+      map.setCenter([lng, lat])
+      map.setZoom(17)
 
-    // 后台继续优化，但不阻塞用户体验
-    status.value = '初始定位完成，后台优化精度中…'
+      if (acc <= desiredAccuracy) {
+        status.value = '定位成功'
+        return
+      }
 
-    // 2) 额外尝试，但以后台方式进行，用户先看到初始位置
-    for (let i = 0; i < attempts - 1; i++) {
-      // small delay between attempts to allow chipset/GNSS to refine
-      await new Promise((r) => setTimeout(r, 700))
-      const next = await withTimeout(getAmapPositionOnce(), 3000)
-      if (next && next.st === 'complete' && next.result && next.result.position) {
-        const acc = next.result.accuracy != null ? next.result.accuracy : Infinity
-        if (!best || acc < best.acc) {
-          best = { result: next.result, acc }
-          const lng2 = next.result.position.lng
-          const lat2 = next.result.position.lat
-          posText.value = `${lng2.toFixed(6)}, ${lat2.toFixed(6)}`
-          accText.value = acc !== Infinity ? `${Math.round(acc)} m` : '未知'
-          marker.setPosition([lng2, lat2])
-          map.setCenter([lng2, lat2])
-          map.setZoom(17)
-          if (acc <= desiredAccuracy) {
-            status.value = '定位成功'
-            return
+      // 后台继续优化，但不阻塞用户体验
+      status.value = '初始定位完成，后台优化精度中…'
+
+      // 2) 额外尝试，但以后台方式进行，用户先看到初始位置
+      for (let i = 0; i < attempts - 1; i++) {
+        // small delay between attempts to allow chipset/GNSS to refine
+        await new Promise((r) => setTimeout(r, 700))
+        const next = await withTimeout(getAmapPositionOnce(), 3000)
+        if (next && next.st === 'complete' && next.result && next.result.position) {
+          const acc2 = next.result.accuracy != null ? next.result.accuracy : Infinity
+          if (!best || acc2 < best.acc) {
+            best = { result: next.result, acc: acc2 }
+            const lng2 = next.result.position.lng
+            const lat2 = next.result.position.lat
+            posText.value = `${lng2.toFixed(6)}, ${lat2.toFixed(6)}`
+            accText.value = acc2 !== Infinity ? `${Math.round(acc2)} m` : '未知'
+            marker.setPosition([lng2, lat2])
+            map.setCenter([lng2, lat2])
+            map.setZoom(17)
+            if (acc2 <= desiredAccuracy) {
+              status.value = '定位成功'
+              return
+            }
           }
         }
       }
+
+      status.value = '定位完成（精度可能有限）'
+      return
     }
 
-    status.value = '定位完成（精度可能有限）'
-    return
-  }
+    // 3) 如果短超时内未得到初始结果，做一次较长的 AMap 定位尝试
+    status.value = '等待高德定位结果…'
+    const final = await withTimeout(getAmapPositionOnce(), 8000)
+    if (final && final.st === 'complete' && final.result && final.result.position) {
+      const acc = final.result.accuracy != null ? final.result.accuracy : Infinity
+      const lng = final.result.position.lng
+      const lat = final.result.position.lat
+      posText.value = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
+      accText.value = acc !== Infinity ? `${Math.round(acc)} m` : '未知'
+      marker.setPosition([lng, lat])
+      map.setCenter([lng, lat])
+      map.setZoom(17)
+      status.value = acc <= desiredAccuracy ? '定位成功' : '定位完成（精度可能有限）'
+      return
+    }
 
-  // 3) 如果短超时内未得到初始结果，做一次较长的 AMap 定位尝试
-  status.value = '等待高德定位结果…'
-  const final = await withTimeout(getAmapPositionOnce(), 8000)
-  if (final && final.st === 'complete' && final.result && final.result.position) {
-    const acc = final.result.accuracy != null ? final.result.accuracy : Infinity
-    const lng = final.result.position.lng
-    const lat = final.result.position.lat
-    posText.value = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
-    accText.value = acc !== Infinity ? `${Math.round(acc)} m` : '未知'
-    marker.setPosition([lng, lat])
-    map.setCenter([lng, lat])
-    map.setZoom(17)
-    status.value = acc <= desiredAccuracy ? '定位成功' : '定位完成（精度可能有限）'
-    return
-  }
-
-  // 4) 最后退回到浏览器原生定位
-  status.value = '定位失败（高德），尝试浏览器定位…'
-  try {
-    const pos = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 })
+    // 4) 最后退回到浏览器原生定位
+    status.value = '定位失败（高德），尝试浏览器定位…'
+    try {
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 })
+      })
+      const lng = pos.coords.longitude
+      const lat = pos.coords.latitude
+      const acc = pos.coords.accuracy
+      posText.value = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
+      accText.value = acc != null ? `${Math.round(acc)} m` : '未知'
+      marker.setPosition([lng, lat])
+      map.setCenter([lng, lat])
+      map.setZoom(17)
+      status.value = '浏览器定位成功（回退）'
+      return
+    } catch (e) {
+      console.warn('定位回退失败', e)
+      // allow user to retry
+      isLocating.value = false
+      const res = await showMessage({
+        title: '定位失败',
+        message: '浏览器定位回退失败：' + (e?.message || String(e)),
+        details: JSON.stringify(e),
+        type: 'error',
+        showCancel: true,
+        confirmText: '重试',
+        cancelText: '关闭'
+      })
+      if (res && res.action === 'confirm') locate()
+      return
+    }
+  } catch (err) {
+    console.error('locate error', err)
+    isLocating.value = false
+    const res = await showMessage({
+      title: '定位异常',
+      message: err?.message || String(err),
+      details: JSON.stringify(err),
+      type: 'error',
+      showCancel: true,
+      confirmText: '重试',
+      cancelText: '关闭'
     })
-    const lng = pos.coords.longitude
-    const lat = pos.coords.latitude
-    const acc = pos.coords.accuracy
-    posText.value = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
-    accText.value = acc != null ? `${Math.round(acc)} m` : '未知'
-    marker.setPosition([lng, lat])
-    map.setCenter([lng, lat])
-    map.setZoom(17)
-    status.value = '浏览器定位成功（回退）'
+    if (res && res.action === 'confirm') locate()
     return
-  } catch (e) {
-    status.value = '定位失败：' + (e?.message || String(e))
-    accText.value = '-'
-    console.warn('定位回退失败', e)
-    return
+  } finally {
+    isLocating.value = false
   }
 }
 
@@ -147,15 +192,47 @@ onMounted(async () => {
     marker = createMarker(map, map.getCenter())
 
     geolocation = await initGeolocation()
-      status.value = '地图已加载'
+    status.value = '地图已加载'
 
-      // Pinia 非侵入式验证（仅用于确认 store 可用，不改 UI）
-      try {
-        const appStore = useAppStore()
-        console.log('[pinia]', appStore.appName, appStore.upperName)
-      } catch (e) {
-        console.warn('[pinia] store init failed', e)
+    // 权限优先检查：若浏览器支持 navigator.permissions，则优先查询 geolocation
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const perm = await navigator.permissions.query({ name: 'geolocation' })
+          if (perm && perm.state === 'denied') {
+            const res = await showMessage({
+              title: '定位被拒绝',
+              message: '定位被拒绝，请在浏览器/系统设置允许定位',
+              type: 'warn',
+              showCancel: true,
+              confirmText: '重试',
+              cancelText: '关闭'
+            })
+            if (res && res.action === 'confirm') locate()
+          } else {
+            // prompt 或 granted
+            locate()
+          }
+        } catch (e) {
+          console.warn('permissions.query failed', e)
+          locate()
+        }
+      } else {
+        // 不支持 permissions API，直接尝试定位
+        locate()
       }
+    } catch (e) {
+      console.warn('permissions check failed', e)
+      locate()
+    }
+
+    // Pinia 非侵入式验证（仅用于确认 store 可用，不改 UI）
+    try {
+      const appStore = useAppStore()
+      console.log('[pinia]', appStore.appName, appStore.upperName)
+    } catch (e) {
+      console.warn('[pinia] store init failed', e)
+    }
   } catch (err) {
     status.value = '错误：' + (err?.message || String(err))
     console.error(err)
