@@ -1,10 +1,18 @@
 <template>
-  <router-view />
+  <div id="app-root">
+    <FloatTaskbar />
+    <router-view />
+  </div>
 </template>
 
 <script>
+import FloatTaskbar from './components/FloatTaskbar.vue'
+
 export default {
-  name: 'App'
+  name: 'App',
+  components: {
+    FloatTaskbar
+  }
 }
 </script>
 
