@@ -1,15 +1,5 @@
 <template>
   <div id="map" class="map"></div>
-
-  <div class="panel">
-    <div class="row"><strong>骑行头盔用户站</strong></div>
-    <div class="row">状态：<span>{{ status }}</span></div>
-    <div class="row">坐标：<code>{{ posText }}</code></div>
-    <div class="row">精度：<code>{{ accText }}</code></div>
-    <div class="row">
-      <button @click="locate">定位到我</button>
-    </div>
-  </div>
 </template>
 
 <script setup>
@@ -175,15 +165,6 @@ onMounted(async () => {
 
 <style scoped>
 .map { height: 100vh; width: 100vw; }
-.panel {
-  position: fixed; left: 12px; top: 12px;
-  background: rgba(255,255,255,0.96);
-  padding: 10px 12px; border-radius: 10px;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  font-size: 14px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.15);
-  max-width: 92vw;
-}
 .row { margin: 6px 0; }
 button { padding: 8px 10px; }
 code { user-select: all; }
