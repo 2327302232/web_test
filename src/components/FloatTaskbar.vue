@@ -22,19 +22,23 @@ FloatTaskbar.vue
 
     <!-- 面板容器：展开时显示，包含三个占位按钮 -->
     <div class="panel" role="navigation" aria-label="浮动任务栏">
-      <!-- 三个垂直排列的占位按钮（无业务逻辑，仅视觉占位） -->
+      <!-- 四个垂直排列的占位按钮（无业务逻辑，仅视觉占位） -->
       <div class="btn-list" aria-hidden="false">
-        <!-- 占位按钮 1 -->
-        <button class="task-btn" aria-label="占位按钮 一">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="currentColor" opacity="0.9"/></svg>
+        <!-- 占位按钮 1: helmet (顶部) -->
+        <button class="task-btn" aria-label="helmet">
+          <img :src="icons[0]" class="task-icon" alt="" />
         </button>
-        <!-- 占位按钮 2 -->
-        <button class="task-btn" aria-label="占位按钮 二">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor" opacity="0.9"/></svg>
+        <!-- 占位按钮 2: me -->
+        <button class="task-btn" aria-label="me">
+          <img :src="icons[1]" class="task-icon" alt="" />
         </button>
-        <!-- 占位按钮 3 -->
-        <button class="task-btn" aria-label="占位按钮 三">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <!-- 占位按钮 3: config -->
+        <button class="task-btn" aria-label="config">
+          <img :src="icons[2]" class="task-icon" alt="" />
+        </button>
+        <!-- 占位按钮 4: log (底部) -->
+        <button class="task-btn" aria-label="log">
+          <img :src="icons[3]" class="task-icon" alt="" />
         </button>
       </div>
     </div>
@@ -42,13 +46,20 @@ FloatTaskbar.vue
 </template>
 
 <script>
+import helmetIcon from '../assets/helmet.svg'
+import meIcon from '../assets/me.svg'
+import configIcon from '../assets/config.svg'
+import logIcon from '../assets/log.svg'
+
 export default {
   name: 'FloatTaskbar',
   data() {
     return {
       // collapsed: true 表示任务栏处于收起状态（仅显示展开按钮）
-      // collapsed: false 表示任务栏展开，显示 panel 与三个占位按钮
+      // collapsed: false 表示任务栏展开，显示 panel 与占位按钮
       collapsed: true,
+      // icons: 从上到下依次为 helmet, me, config, log
+      icons: [helmetIcon, meIcon, configIcon, logIcon]
     }
   },
   methods: {
@@ -65,9 +76,10 @@ export default {
 .float-wrapper {
   /* 容器：定位与安全区处理（外层 wrapper） */
   --ftb-width: 40px; /* 展开后面板宽度（缩小至更紧凑） */
-  --ftb-toggle-w: 20px; /* 展开按钮宽度（细长形的较短边，>=44px） */
+  --ftb-toggle-w: 20px; /* 展开按钮宽度（细长形的较短边） */
   --ftb-toggle-h: 25px; /* 展开按钮高度（细长形的较长边） */
   --ftb-btn-size: clamp(44px, 12vw, 56px); /* 内部占位按钮尺寸，可响应 */
+  --ftb-icon-size: 20px; /* icon 图片尺寸 */
   --ftb-gap: 5px;
   --ftb-alpha: 0.42; /* 基础透明度（用于 panel 与 toggle，使其一致） */
   --ftb-bg: rgba(10, 12, 16, var(--ftb-alpha)); /* 稍微降低不透明度，但不要过低 */
@@ -162,6 +174,13 @@ export default {
   justify-content: center;
   cursor: default;
   transition: transform 180ms, opacity 180ms;
+}
+
+.task-icon {
+  width: var(--ftb-icon-size);
+  height: var(--ftb-icon-size);
+  display: block;
+  object-fit: contain;
 }
 
 /* 当容器收起时，内部按钮不可交互 */
