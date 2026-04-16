@@ -8,6 +8,7 @@
     "dev": "node src/index.js"
   },
   "dependencies": {
-    "better-sqlite3": "12.9.0"
+    "better-sqlite3": "12.9.0",
+    "mqtt": "^5.15.1"
   }
 }

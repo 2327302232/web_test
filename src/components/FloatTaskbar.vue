@@ -90,7 +90,7 @@ export default {
   --ftb-btn-size: clamp(44px, 12vw, 56px); /* 内部占位按钮尺寸，可响应 */
   --ftb-icon-size: 20px; /* icon 图片尺寸 */
   --ftb-gap: 5px;
-  --ftb-alpha: 0.42; /* 基础透明度（用于 panel 与 toggle，使其一致） */
+  --ftb-alpha: 0.20; /* 基础透明度（用于 panel 与 toggle，使其一致） */
   --ftb-bg: rgba(10, 12, 16, var(--ftb-alpha)); /* 稍微降低不透明度，但不要过低 */
   --ftb-accent: rgba(255, 255, 255, 0.74);
 
@@ -121,7 +121,7 @@ export default {
   border: none;
   background: var(--ftb-bg); /* 与面板使用相同透明度 */
   color: var(--ftb-accent);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.28);
+  box-shadow: 0 4px 10px rgba(255, 255, 255, 0.74);
   cursor: pointer;
   transition: transform 220ms, background 200ms, left 200ms;
   z-index: 1220;
@@ -146,7 +146,7 @@ export default {
   background: var(--ftb-bg);
   color: var(--ftb-accent);
   border-radius: 14px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  box-shadow: 0 6px 20px rgba(255,255,255,0.01);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   transition: width 260ms cubic-bezier(.2,.9,.2,1), opacity 200ms, padding 200ms;
@@ -180,7 +180,7 @@ export default {
   min-height: 44px;
   border-radius: 999px;
   border: none;
-  background: rgba(255,255,255,0.03); /* 略微降低按钮面板透明度 */
+  background: rgba(0,0,0,0.28); /* 略微降低按钮面板透明度 */
   color: var(--ftb-accent);
   display: inline-flex;
   align-items: center;
