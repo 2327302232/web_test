@@ -1,0 +1,374 @@
+/*
+ * server/src/mqtt.js
+ *
+ * 功能：实现一个常驻 MQTT 客户端模块，负责订阅设备 topic、解析 payload、把 telemetry 写入 db 模块、
+ * 处理命令下发与 ACK、并通过事件机制把收到的实时数据发给上层（index.js 或其它模块）。
+ *
+ * 使用示例（非可运行代码，仅说明用法）：
+ * import { startMqtt, stopMqtt, publishCommand, emitter as mqttEmitter, on } from './mqtt.js';
+ * await startMqtt();
+ * on('telemetry', p => console.log('telemetry', p));
+ * const cmdId = await publishCommand({ deviceId: 'dev001', type: 'power', action: 'set', value: 'low' });
+ *
+ * 导出：
+ * - startMqtt(): Promise<Client>  启动并返回 mqtt client
+ * - stopMqtt(): void            优雅断开连接
+ * - publishCommand(obj): Promise<cmdId>  发布命令并返回 cmdId
+ * - emitter (EventEmitter)     事件总线，或使用 on(event, cb)
+ *
+ * 事件名称与 payload 结构：
+ * - 'telemetry': { deviceId, ts, lng, lat, speed?, battery?, raw }
+ * - 'cmd_ack'  : { deviceId, cmdId, ok, message?, ts, raw }
+ * - 'status'   : { deviceId, online, ts, raw }
+ * - 'event'    : { deviceId, eventType, raw }
+ * - 'error'    : { error, context? }
+ *
+ * 我已完成：server/src/mqtt.js（不包含 git 操作）
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import mqtt from 'mqtt';
+import { EventEmitter } from 'events';
+import { v4 as uuidv4 } from 'uuid';
+import { insertGpsPoint, addDeviceCommand, updateCommandStatus, getPendingCommands } from './db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const emitter = new EventEmitter();
+
+// 环境变量与默认值
+const {
+  MQTT_URL,
+  MQTT_USERNAME,
+  MQTT_PASSWORD,
+  MQTT_CLIENT_ID,
+  MQTT_TOPIC_PREFIX = 'v1/devices',
+  MQTT_REJECT_UNAUTHORIZED = 'true',
+  MQTT_CA_PATH,
+  MQTT_QOS_TELEMETRY = '0',
+  MQTT_QOS_CMD = '1',
+  COMMAND_ACK_TIMEOUT_MS = '8000',
+  RECONNECT_PERIOD_MS = '2000'
+} = process.env;
+
+const DEFAULT_CLIENT_ID = MQTT_CLIENT_ID || `ride-helmet-server-${Date.now()}`;
+const rejectUnauthorized = String(MQTT_REJECT_UNAUTHORIZED).toLowerCase() !== 'false';
+const qosTelemetry = Number.isFinite(Number(MQTT_QOS_TELEMETRY)) ? Number(MQTT_QOS_TELEMETRY) : 0;
+const qosCmd = Number.isFinite(Number(MQTT_QOS_CMD)) ? Number(MQTT_QOS_CMD) : 1;
+const ackTimeoutMs = Number.isFinite(Number(COMMAND_ACK_TIMEOUT_MS)) ? Number(COMMAND_ACK_TIMEOUT_MS) : 8000;
+const reconnectPeriodMs = Number.isFinite(Number(RECONNECT_PERIOD_MS)) ? Number(RECONNECT_PERIOD_MS) : 2000;
+
+let caBuffer = null;
+if (MQTT_CA_PATH) {
+  try {
+    const caPath = path.isAbsolute(MQTT_CA_PATH) ? MQTT_CA_PATH : path.resolve(__dirname, '..', MQTT_CA_PATH);
+    if (fs.existsSync(caPath)) caBuffer = fs.readFileSync(caPath);
+  } catch (e) {
+    // 读取 CA 失败，继续但 emit 错误
+    emitter.emit('error', { error: e, context: { where: 'read CA file', path: MQTT_CA_PATH } });
+  }
+}
+
+// 内存结构
+const ackTimers = new Map(); // cmdId -> Timeout
+let client = null;
+let clientConnected = false;
+
+function safeJsonParse(buf) {
+  try {
+    if (!buf) return null;
+    if (Buffer.isBuffer(buf)) return JSON.parse(buf.toString());
+    if (typeof buf === 'string') return JSON.parse(buf);
+    return buf; // already object
+  } catch (err) {
+    return { __parseError: err };
+  }
+}
+
+async function handleTelemetry(deviceId, payloadObj, topic) {
+  if (!payloadObj || payloadObj.__parseError) {
+    emitter.emit('error', { error: payloadObj && payloadObj.__parseError ? payloadObj.__parseError : new Error('Empty telemetry payload'), context: { topic } });
+    return;
+  }
+
+  const ts = payloadObj.ts != null ? Number(payloadObj.ts) : Date.now();
+  const lng = Number(payloadObj.lng ?? payloadObj.lon ?? payloadObj.long ?? null);
+  const lat = Number(payloadObj.lat ?? null);
+
+  const hasCoords = Number.isFinite(lng) && Number.isFinite(lat);
+
+  if (hasCoords) {
+    try {
+      const insertRes = insertGpsPoint({
+        deviceId,
+        ts,
+        lng,
+        lat,
+        speed: payloadObj.speed ?? payloadObj.spd ?? null,
+        heading: payloadObj.heading ?? payloadObj.bearing ?? null,
+        altitude: payloadObj.alt ?? null,
+        accuracy: payloadObj.accuracy ?? payloadObj.hdop ?? null,
+        battery: payloadObj.battery ?? null,
+        status: payloadObj.status ?? 'ok',
+        source: 'mqtt',
+        rawJson: JSON.stringify(payloadObj),
+        createdAt: Date.now()
+      });
+      emitter.emit('telemetry', { deviceId, ts, lng, lat, speed: payloadObj.speed ?? null, battery: payloadObj.battery ?? null, raw: payloadObj });
+      return insertRes;
+    } catch (err) {
+      emitter.emit('error', { error: err, context: { deviceId, topic } });
+      return;
+    }
+  }
+
+  // 没有坐标，但可能包含状态信息（battery/status 等），上报实时状态以便前端显示
+  if (payloadObj.battery !== undefined || payloadObj.status !== undefined) {
+    emitter.emit('telemetry', { deviceId, ts, battery: payloadObj.battery ?? null, raw: payloadObj });
+    return;
+  }
+
+  // 其它 telemetry，直接 emit raw
+  emitter.emit('telemetry', { deviceId, ts, raw: payloadObj });
+}
+
+async function handleEvent(deviceId, eventType, payloadObj, topic) {
+  if (!payloadObj || payloadObj.__parseError) {
+    emitter.emit('error', { error: payloadObj && payloadObj.__parseError ? payloadObj.__parseError : new Error('Empty event payload'), context: { topic } });
+    return;
+  }
+
+  // 若事件包含坐标，可写入 gps_points
+  const lng = Number(payloadObj.lng ?? payloadObj.lon ?? null);
+  const lat = Number(payloadObj.lat ?? payloadObj.lat ?? null);
+  const hasCoords = Number.isFinite(lng) && Number.isFinite(lat);
+  if (hasCoords) {
+    try {
+      insertGpsPoint({ deviceId, ts: payloadObj.ts ?? Date.now(), lng, lat, rawJson: JSON.stringify(payloadObj), source: 'mqtt-event', createdAt: Date.now() });
+    } catch (e) {
+      emitter.emit('error', { error: e, context: { deviceId, eventType } });
+    }
+  }
+
+  emitter.emit('event', { deviceId, eventType: eventType || null, raw: payloadObj });
+}
+
+async function handleAck(deviceId, payloadObj, topic) {
+  if (!payloadObj || payloadObj.__parseError) {
+    emitter.emit('error', { error: payloadObj && payloadObj.__parseError ? payloadObj.__parseError : new Error('Empty ack payload'), context: { topic } });
+    return;
+  }
+
+  const cmdId = payloadObj.cmdId ?? payloadObj.cmd_id ?? payloadObj.cmd;
+  if (!cmdId) {
+    emitter.emit('error', { error: new Error('No cmdId in ack'), context: { topic, payload: payloadObj } });
+    return;
+  }
+
+  const ok = payloadObj.ok === true || payloadObj.ok === 'true' || payloadObj.ok === 1 || payloadObj.ok === '1';
+  const ackTs = payloadObj.ts != null ? Number(payloadObj.ts) : Date.now();
+
+  try {
+    updateCommandStatus({ cmdId, status: ok ? 'acked' : 'failed', ackTs, ackPayload: JSON.stringify(payloadObj) });
+  } catch (err) {
+    emitter.emit('error', { error: err, context: { cmdId, deviceId } });
+  }
+
+  // 清除对应 ACK 超时计时器
+  try {
+    const t = ackTimers.get(cmdId);
+    if (t) {
+      clearTimeout(t);
+      ackTimers.delete(cmdId);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  emitter.emit('cmd_ack', { deviceId, cmdId, ok, message: payloadObj.message, ts: ackTs, raw: payloadObj });
+}
+
+async function handleStatus(deviceId, payloadObj, topic) {
+  if (!payloadObj || payloadObj.__parseError) {
+    emitter.emit('error', { error: payloadObj && payloadObj.__parseError ? payloadObj.__parseError : new Error('Empty status payload'), context: { topic } });
+    return;
+  }
+
+  const online = payloadObj.online === true || payloadObj.online === 'true' || payloadObj.online === 1 || payloadObj.online === '1';
+  const ts = payloadObj.ts != null ? Number(payloadObj.ts) : Date.now();
+  emitter.emit('status', { deviceId, online, ts, raw: payloadObj });
+}
+
+function routeMessage(topic, payload) {
+  const prefixParts = MQTT_TOPIC_PREFIX.split('/');
+  const parts = topic.split('/');
+  const deviceIdIndex = prefixParts.length;
+  const deviceId = parts[deviceIdIndex];
+  const category = parts[deviceIdIndex + 1];
+  const rest = parts.slice(deviceIdIndex + 2);
+
+  const parsed = safeJsonParse(payload);
+  if (parsed && parsed.__parseError) {
+    emitter.emit('error', { error: parsed.__parseError, context: { topic, raw: payload.toString() } });
+    return;
+  }
+
+  switch (category) {
+    case 'telemetry':
+      handleTelemetry(deviceId, parsed, topic).catch(e => emitter.emit('error', { error: e, context: { topic } }));
+      break;
+    case 'events':
+      handleEvent(deviceId, rest[0] || null, parsed, topic).catch(e => emitter.emit('error', { error: e, context: { topic } }));
+      break;
+    case 'ack':
+      handleAck(deviceId, parsed, topic).catch(e => emitter.emit('error', { error: e, context: { topic } }));
+      break;
+    case 'status':
+      handleStatus(deviceId, parsed, topic).catch(e => emitter.emit('error', { error: e, context: { topic } }));
+      break;
+    default:
+      // 未识别的 category，emit event 供上层处理
+      emitter.emit('event', { deviceId, eventType: category, raw: parsed });
+  }
+}
+
+export async function startMqtt() {
+  if (!MQTT_URL) throw new Error('MQTT_URL is required in process.env');
+  if (client) return client;
+
+  const opts = {
+    protocolVersion: 5,
+    clientId: DEFAULT_CLIENT_ID,
+    keepalive: 30,
+    clean: false,
+    reconnectPeriod: reconnectPeriodMs,
+    rejectUnauthorized,
+  };
+  if (MQTT_USERNAME) opts.username = MQTT_USERNAME;
+  if (MQTT_PASSWORD) opts.password = MQTT_PASSWORD;
+  if (caBuffer) opts.ca = caBuffer;
+
+  client = mqtt.connect(MQTT_URL, opts);
+
+  client.on('connect', (connack) => {
+    clientConnected = true;
+    console.log('MQTT connected', MQTT_URL);
+    const prefix = MQTT_TOPIC_PREFIX;
+    client.subscribe(`${prefix}/+/telemetry/#`, { qos: qosTelemetry }, (err, granted) => {
+      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/telemetry/#` } });
+      else console.log('subscribed', granted);
+    });
+    client.subscribe(`${prefix}/+/events/#`, { qos: qosTelemetry }, (err, granted) => {
+      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/events/#` } });
+    });
+    client.subscribe(`${prefix}/+/ack`, { qos: 1 }, (err, granted) => {
+      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/ack` } });
+    });
+    client.subscribe(`${prefix}/+/status`, { qos: 1 }, (err, granted) => {
+      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/status` } });
+    });
+  });
+
+  client.on('reconnect', () => {
+    console.log('MQTT reconnecting');
+    emitter.emit('error', { error: new Error('mqtt reconnect'), context: {} });
+  });
+
+  client.on('offline', () => {
+    clientConnected = false;
+    console.log('MQTT offline');
+  });
+
+  client.on('close', () => {
+    clientConnected = false;
+    console.log('MQTT connection closed');
+  });
+
+  client.on('error', (err) => {
+    emitter.emit('error', { error: err, context: { where: 'mqtt client' } });
+  });
+
+  client.on('message', (topic, payload, packet) => {
+    try {
+      routeMessage(topic, payload);
+    } catch (err) {
+      emitter.emit('error', { error: err, context: { topic } });
+    }
+  });
+
+  return client;
+}
+
+export function stopMqtt() {
+  if (!client) return;
+  try {
+    client.end(true, () => {
+      client = null;
+      clientConnected = false;
+      emitter.emit('status', { deviceId: null, online: false, ts: Date.now(), raw: null });
+    });
+  } catch (e) {
+    emitter.emit('error', { error: e, context: { where: 'stopMqtt' } });
+  }
+
+  // 清理 ackTimers
+  for (const [cmdId, t] of ackTimers.entries()) {
+    try { clearTimeout(t); } catch (e) {}
+    try { updateCommandStatus({ cmdId, status: 'expired' }); } catch (e) {}
+  }
+  ackTimers.clear();
+}
+
+export function publishCommand({ deviceId, cmdId = null, type, action, value } = {}) {
+  return new Promise(async (resolve, reject) => {
+    if (!deviceId) return reject(new Error('deviceId is required'));
+    if (!client) return reject(new Error('MQTT client not started'));
+
+    const finalCmdId = cmdId || uuidv4();
+    const ts = Date.now();
+
+    // 先写 DB（幂等）
+    try {
+      await addDeviceCommand({ cmdId: finalCmdId, deviceId, ts, type, action, valueJson: typeof value === 'object' ? JSON.stringify(value) : String(value ?? '') });
+    } catch (err) {
+      // 若 addDeviceCommand 抛错（非唯一约束冲突），记录并返回失败
+      try { updateCommandStatus({ cmdId: finalCmdId, status: 'failed', lastError: err && err.message ? err.message : String(err) }); } catch (e) {}
+      return reject(err);
+    }
+
+    const payload = { deviceId, cmdId: finalCmdId, type, action, value, ts };
+    const topic = `${MQTT_TOPIC_PREFIX}/${deviceId}/cmd`;
+
+    client.publish(topic, JSON.stringify(payload), { qos: qosCmd }, (err) => {
+      if (err) {
+        try { updateCommandStatus({ cmdId: finalCmdId, status: 'failed', lastError: err && err.message ? err.message : String(err) }); } catch (e) {}
+        return reject(err);
+      }
+
+      try { updateCommandStatus({ cmdId: finalCmdId, status: 'sent', sentTs: Date.now() }); } catch (e) { emitter.emit('error', { error: e, context: { cmdId: finalCmdId } }); }
+
+      // 启动 ACK 超时计时器
+      try {
+        const t = setTimeout(() => {
+          try { updateCommandStatus({ cmdId: finalCmdId, status: 'expired' }); } catch (e) { emitter.emit('error', { error: e, context: { cmdId: finalCmdId } }); }
+          ackTimers.delete(finalCmdId);
+          emitter.emit('cmd_ack', { deviceId, cmdId: finalCmdId, ok: false, message: 'ack timeout', ts: Date.now(), raw: null });
+        }, ackTimeoutMs);
+        ackTimers.set(finalCmdId, t);
+      } catch (e) {
+        emitter.emit('error', { error: e, context: { where: 'set ack timer', cmdId: finalCmdId } });
+      }
+
+      return resolve(finalCmdId);
+    });
+  });
+}
+
+export function on(eventName, cb) { return emitter.on(eventName, cb); }
+
+export { emitter as mqttEmitter };
+
+// 我已完成：server/src/mqtt.js（不包含 git 操作）
