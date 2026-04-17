@@ -65,7 +65,12 @@ export async function initDb(options = {}) {
   const dataDir = path.dirname(dbPath);
   fs.mkdirSync(dataDir, { recursive: true });
 
-  db = new Database(dbPath, options.openOptions || {});
+  // 如果传入 options（非空对象），则传给 better-sqlite3，否则使用默认构造
+  if (options && Object.keys(options).length > 0) {
+    db = new Database(dbPath, options);
+  } else {
+    db = new Database(dbPath);
+  }
 
   try {
     db.pragma('journal_mode = WAL');
@@ -191,17 +196,32 @@ export function getTrack({ deviceId, from = 0, to = Number.MAX_SAFE_INTEGER, lim
  */
 export function addDeviceCommand({ cmdId, deviceId, ts, type, action, valueJson } = {}) {
   if (!db) throw new Error('Database not initialized. Call initDb() first.');
-  if (!cmdId || !deviceId || ts == null || !type || !action || valueJson == null) {
-    throw new Error('Missing required fields for addDeviceCommand: cmdId, deviceId, ts, type, action, valueJson');
+  if (!cmdId || !deviceId || ts == null || !type || !action) {
+    throw new Error('Missing required fields for addDeviceCommand: cmdId, deviceId, ts, type, action');
   }
+
+  // 支持传入对象或字符串。若未提供则默认 '{}'(非 NULL，因为 schema 要求 NOT NULL)。
+  let valueJsonStr;
+  if (valueJson == null) {
+    valueJsonStr = '{}';
+  } else if (typeof valueJson === 'object') {
+    try {
+      valueJsonStr = JSON.stringify(valueJson);
+    } catch (e) {
+      throw new Error('Failed to stringify valueJson object');
+    }
+  } else {
+    valueJsonStr = String(valueJson);
+  }
+
   try {
-    const info = stmts.insertCmd.run({ cmd_id: String(cmdId), device_id: String(deviceId), ts: Number(ts), type: String(type), action: String(action), value_json: String(valueJson), status: 'queued', retries: 0 });
+    const info = stmts.insertCmd.run({ cmd_id: String(cmdId), device_id: String(deviceId), ts: Number(ts), type: String(type), action: String(action), value_json: valueJsonStr, status: 'queued', retries: 0 });
     return { lastInsertRowid: info.lastInsertRowid, cmdId };
   } catch (err) {
-    // 约定：若为唯一约束冲突，则返回已有记录，便于幂等。
+    // 若唯一约束冲突，则返回已有记录，便于幂等。
     if (err && err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint'))) {
       const row = stmts.getCmdById.get({ cmd_id: String(cmdId) });
-      return { existing: true, row };
+      return { existing: true, row, status: row ? row.status : undefined };
     }
     throw err;
   }
