@@ -33,6 +33,58 @@ cd server
 npm run start
 ```
 
+## HTTP 命令 API（阶段 E）
+
+新增了用于测试的命令下发 HTTP 接口：
+
+- POST `/api/command` — 下发设备命令（用于测试，未实现鉴权）
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8787/api/command \
+	-H "Content-Type: application/json" \
+	-d '{"deviceId":"dev-001","type":"cmd","action":"reboot","value":{"delay":5}}'
+```
+
+成功返回示例（HTTP 200）：
+
+```json
+{ "cmdId": "<uuid>", "status": "sent" }
+```
+
+若输入校验失败将返回 HTTP 400 及错误描述；若发布到 MQTT 失败将返回 HTTP 500 并把 DB 中对应记录标记为 `failed`。
+
+实现要点：
+
+- 路由实现位于 `src/api/command.js`，会先调用 `addDeviceCommand(...)` 写入 `device_commands`（status=queued），然后调用 `publishCommand(...)` 发布到 MQTT（会尝试把状态更新为 `sent`，ACK 由 MQTT 模块处理并更新为 `acked`）。
+- 当前未实现鉴权：仅用于本地或测试环境。生产环境请添加鉴权与速率限制。
+
+本地手动测试建议：
+
+1) 启动长期后端：
+
+```powershell
+cd server
+npm run start
+```
+
+2) 在另一个终端订阅设备 topic（示例，使用 mosquitto_sub）：
+
+```bash
+mosquitto_sub -t "v1/devices/dev-001/cmd" -v
+```
+
+3) 使用 curl 发送命令（参考上方示例），观察 mosquitto_sub 是否收到包含相同 `cmdId` 的 payload。
+
+4) 验证 sqlite 数据库（示例 sqlite3 查询）：
+
+```
+sqlite3 server/data/tracks.sqlite "SELECT cmd_id, device_id, status, ts, sent_ts, ack_ts FROM device_commands ORDER BY ts DESC LIMIT 10;"
+```
+
+注：当前为测试实现，agent 未执行任何命令或进行安装操作。
+
 主要环境变量（在仓库中被发现并使用）：
 - `MQTT_URL`（必需）
 - `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_CLIENT_ID`

@@ -29,3 +29,44 @@ sqlite3 server/data/tracks.sqlite "SELECT cmd_id, device_id, status, ts FROM dev
 
 5) 其它建议
 - 使用 `test-start.mjs`（根目录）做快速调试，但 `src/server.js` 为长期运行入口并已在 `package.json` 中添加 `start` 脚本。
+
+6) HTTP 命令 API（手动验证）
+
+1) 启动长期后端（另起终端）：
+
+```powershell
+cd server
+npm run start
+```
+
+2) 在另一个终端使用 `mosquitto_sub` 订阅设备命令 topic：
+
+```bash
+mosquitto_sub -t "v1/devices/dev-001/cmd" -v
+```
+
+3) 使用 curl 发送命令：
+
+```bash
+curl -X POST http://localhost:8787/api/command \
+	-H "Content-Type: application/json" \
+	-d '{"deviceId":"dev-001","type":"cmd","action":"reboot","value":{"delay":5}}'
+```
+
+4) 观察 `mosquitto_sub` 是否收到包含 `cmdId` 的消息；记录返回的 `cmdId`。
+
+5) 在 DB 中查询命令状态：
+
+```
+sqlite3 server/data/tracks.sqlite "SELECT cmd_id, device_id, status, ts, sent_ts, ack_ts FROM device_commands WHERE cmd_id='<cmdId>' LIMIT 1;"
+```
+
+6) 可用 `mosquitto_pub` 模拟设备发送 ACK（将 `<cmdId>` 替换为上一步返回的 cmdId）：
+
+```bash
+mosquitto_pub -t "v1/devices/dev-001/ack" -m '{"cmdId":"<cmdId>","ok":true}'
+```
+
+7) 再次查询 DB，确认对应记录的 `status -> acked` 并且 `ack_ts`、`ack_payload` 被写入。
+
+故障排查：若发布到 MQTT 失败，路由会把命令状态更新为 `failed` 并在 HTTP 返回中包含错误简述；检查服务端日志中的 `[MQTT EVENT] error` 或 `publishCommand failed` 日志以定位问题。

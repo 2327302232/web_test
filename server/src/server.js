@@ -13,8 +13,11 @@
 import 'dotenv/config';
 import { initDb, db } from './db.js';
 import { startMqtt, stopMqtt, on as onMqtt } from './mqtt.js';
+import express from 'express';
+import commandRouter from './api/command.js';
 
 let shuttingDown = false;
+let httpServer = null;
 
 async function start() {
   try {
@@ -27,6 +30,21 @@ async function start() {
     console.log('src/server.js: starting MQTT client...');
     await startMqtt();
     console.log('src/server.js: MQTT client started (see mqtt logs for subscriptions).');
+
+    // 挂载并启动内置 HTTP 接口（若需要使用 express）
+    try {
+      const app = express();
+      app.use(express.json({ limit: '1mb' }));
+      // 健康检查
+      app.get('/api/health', (req, res) => res.json({ ok: true }));
+      // mount command router
+      app.use(commandRouter);
+
+      const port = process.env.PORT ? Number(process.env.PORT) : 8787;
+      httpServer = app.listen(port, () => console.log(`HTTP server listening on port ${port}`));
+    } catch (e) {
+      console.warn('src/server.js: failed to start HTTP server', e && e.message ? e.message : e);
+    }
 
     // 订阅 MQTT 事件用于运行时日志观察
     onMqtt('telemetry', (p) => console.log('[MQTT EVENT] telemetry', JSON.stringify(p)));
@@ -67,6 +85,16 @@ async function shutdown(exitCode = 0) {
       }
     } catch (e) {
       console.warn('src/server.js: error while closing DB:', e);
+    }
+
+    // 关闭 HTTP server（若存在）
+    try {
+      if (httpServer && typeof httpServer.close === 'function') {
+        await new Promise((resolve) => httpServer.close(() => resolve()));
+        console.log('src/server.js: HTTP server closed.');
+      }
+    } catch (e) {
+      console.warn('src/server.js: error while closing HTTP server:', e);
     }
   } catch (err) {
     console.error('src/server.js: error during shutdown:', err);
