@@ -1,0 +1,87 @@
+/*
+ * server/src/server.js
+ * 长期后端入口（ESM）
+ * 职责：
+ *  - 在进程启动时调用并等待 `initDb()` 完成；
+ *  - 启动 MQTT 客户端（`startMqtt()`）；
+ *  - 打印启动日志（DB 初始化成功、MQTT 启动提示）；
+ *  - 注册优雅退出（SIGINT / SIGTERM），在退出时停止 MQTT 并关闭 DB 连接。
+ *
+ * 注意：此文件不实现 HTTP 路由或其它业务逻辑，仅作为长期运行入口。
+ */
+
+import 'dotenv/config';
+import { initDb, db } from './db.js';
+import { startMqtt, stopMqtt, on as onMqtt } from './mqtt.js';
+
+let shuttingDown = false;
+
+async function start() {
+  try {
+    console.log('src/server.js: starting...');
+
+    console.log('src/server.js: initializing DB...');
+    await initDb();
+    console.log('src/server.js: DB initialized.');
+
+    console.log('src/server.js: starting MQTT client...');
+    await startMqtt();
+    console.log('src/server.js: MQTT client started (see mqtt logs for subscriptions).');
+
+    // 订阅 MQTT 事件用于运行时日志观察
+    onMqtt('telemetry', (p) => console.log('[MQTT EVENT] telemetry', JSON.stringify(p)));
+    onMqtt('cmd_ack', (a) => console.log('[MQTT EVENT] cmd_ack', JSON.stringify(a)));
+    onMqtt('status', (s) => console.log('[MQTT EVENT] status', JSON.stringify(s)));
+    onMqtt('event', (e) => console.log('[MQTT EVENT] event', JSON.stringify(e)));
+    onMqtt('error', (err) => console.error('[MQTT EVENT] error', err && err.error ? err.error : err));
+
+    console.log('src/server.js: ready. Waiting for MQTT messages. Press Ctrl+C to stop.');
+  } catch (err) {
+    console.error('src/server.js: failed to start:', err);
+    await shutdown(1);
+  }
+}
+
+async function shutdown(exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log('src/server.js: shutting down...');
+
+  try {
+    // 停止 MQTT
+    try {
+      const res = stopMqtt();
+      if (res && typeof res.then === 'function') await res;
+      console.log('src/server.js: MQTT client stopped.');
+    } catch (e) {
+      console.warn('src/server.js: error while stopping MQTT client:', e);
+    }
+
+    // 关闭数据库连接（better-sqlite3 的 close 是同步方法）
+    try {
+      if (db && typeof db.close === 'function') {
+        db.close();
+        console.log('src/server.js: database connection closed.');
+      } else {
+        console.log('src/server.js: no DB connection to close.');
+      }
+    } catch (e) {
+      console.warn('src/server.js: error while closing DB:', e);
+    }
+  } catch (err) {
+    console.error('src/server.js: error during shutdown:', err);
+    exitCode = exitCode || 1;
+  } finally {
+    console.log('src/server.js: exit now.');
+    // 确保进程退出
+    process.exit(exitCode);
+  }
+}
+
+process.on('SIGINT', () => { console.log('src/server.js: SIGINT received'); shutdown(0); });
+process.on('SIGTERM', () => { console.log('src/server.js: SIGTERM received'); shutdown(0); });
+process.on('uncaughtException', (err) => { console.error('src/server.js: uncaughtException', err); shutdown(1); });
+process.on('unhandledRejection', (reason) => { console.error('src/server.js: unhandledRejection', reason); shutdown(1); });
+
+// 启动
+start();
