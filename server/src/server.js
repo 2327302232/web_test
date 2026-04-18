@@ -48,7 +48,63 @@ async function start() {
 
     // 订阅 MQTT 事件用于运行时日志观察
     onMqtt('telemetry', (p) => console.log('[MQTT EVENT] telemetry', JSON.stringify(p)));
-    onMqtt('cmd_ack', (a) => console.log('[MQTT EVENT] cmd_ack', JSON.stringify(a)));
+    onMqtt('cmd_ack', async (payload) => {
+      console.log('[MQTT EVENT] cmd_ack', JSON.stringify(payload));
+      try {
+        const cmdId = payload.cmdId || payload.cmd_id || payload.cmd;
+        if (!cmdId) {
+          console.warn('[ACK] Missing cmdId in payload:', payload);
+          return;
+        }
+        // 幂等策略：若 DB 已有 status='acked'，则忽略后续失败/超时更新，但允许 ok=true 覆盖
+        let shouldUpdate = true;
+        let currentStatus = null;
+        try {
+          if (db && typeof db.prepare === 'function') {
+            const row = db.prepare('SELECT status FROM device_commands WHERE cmd_id = ?').get(cmdId);
+            currentStatus = row ? row.status : null;
+            if (currentStatus === 'acked' && payload.ok !== true) {
+              shouldUpdate = false;
+              console.log(`[ACK] cmdId ${cmdId} 已为 acked，忽略本次 status=${payload.ok ? 'acked' : 'failed'}`);
+            }
+          }
+        } catch (e) {
+          console.warn('[ACK] 查询当前命令状态失败:', e);
+        }
+        if (!shouldUpdate) return;
+        // 状态判定
+        let status = 'acked';
+        if (payload.ok === true) {
+          status = 'acked';
+        } else if (payload.ok === false && payload.message === 'ack timeout') {
+          status = 'failed';
+        } else if (payload.ok === false) {
+          status = 'failed';
+        }
+        // ack_ts
+        const ackTs = payload.ts != null ? Number(payload.ts) : Date.now();
+        // ack_payload
+        const ackPayload = JSON.stringify(payload.raw || payload);
+        // last_error
+        const lastError = payload.ok === false ? (payload.message || 'ACK failed') : undefined;
+        // DB 更新
+        const { updateCommandStatus } = await import('./db.js');
+        try {
+          const res = updateCommandStatus({
+            cmdId,
+            status,
+            ackTs,
+            ackPayload,
+            lastError
+          });
+          console.log(`[ACK] DB updated for cmdId ${cmdId} -> status ${status}, changes: ${res.changes}`);
+        } catch (err) {
+          console.error(`[ACK] DB update failed for cmdId ${cmdId}:`, err);
+        }
+      } catch (e) {
+        console.error('[ACK] handler error:', e);
+      }
+    });
     onMqtt('status', (s) => console.log('[MQTT EVENT] status', JSON.stringify(s)));
     onMqtt('event', (e) => console.log('[MQTT EVENT] event', JSON.stringify(e)));
     onMqtt('error', (err) => console.error('[MQTT EVENT] error', err && err.error ? err.error : err));

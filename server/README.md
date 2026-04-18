@@ -85,6 +85,23 @@ sqlite3 server/data/tracks.sqlite "SELECT cmd_id, device_id, status, ts, sent_ts
 
 注：当前为测试实现，agent 未执行任何命令或进行安装操作。
 
+## 设备命令 ACK 落库说明
+
+- 当设备通过 MQTT 发送 ACK（或超时未收到 ACK）时，后端会自动将 ACK 结果写入 device_commands 表：
+  - status: 'acked'（成功）或 'failed'（超时/失败）
+  - ack_ts: ACK 到达或超时时间戳
+  - ack_payload: JSON 字符串，记录原始 payload
+  - last_error: 仅失败时记录 message
+- 幂等策略：
+  - 真实设备 ACK（ok=true）会覆盖 failed/expired 状态
+  - 若已为 'acked'，后续同 cmdId 的超时/失败不会覆盖
+
+### 手动验证方法
+
+1. 用 mosquitto_pub 向 ack topic 发送 payload，模拟设备 ACK
+2. 用 sqlite3 查询 device_commands 表，检查 ack_ts/ack_payload/status
+3. 测试超时情形与幂等覆盖（见 tests/server-manual-checklist.md）
+
 主要环境变量（在仓库中被发现并使用）：
 - `MQTT_URL`（必需）
 - `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_CLIENT_ID`

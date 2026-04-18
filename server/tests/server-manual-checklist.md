@@ -69,4 +69,27 @@ mosquitto_pub -t "v1/devices/dev-001/ack" -m '{"cmdId":"<cmdId>","ok":true}'
 
 7) 再次查询 DB，确认对应记录的 `status -> acked` 并且 `ack_ts`、`ack_payload` 被写入。
 
+## 验证 ACK 已写入 DB
+
+1) 用 mosquitto_pub 模拟设备 ACK：
+   - 发送到 ack topic，payload 示例：
+     - 成功 ACK：
+       { "deviceId": "dev-001", "cmdId": "<cmdId>", "ok": true, "message": "ack ok", "ts": 1713430000000 }
+     - 超时 ACK：
+       { "deviceId": "dev-001", "cmdId": "<cmdId>", "ok": false, "message": "ack timeout", "ts": 1713430001000 }
+   - 注意：<cmdId> 替换为实际命令 ID。
+
+2) 用 sqlite3 查询 device_commands 表，检查 ack_ts/ack_payload/status：
+   - 示例：
+     sqlite3 server/data/tracks.sqlite "SELECT cmd_id, device_id, status, ack_ts, ack_payload, last_error FROM device_commands WHERE cmd_id = '<cmdId>';"
+   - status 应为 'acked'（ok=true）或 'failed'（超时/失败），ack_ts/ack_payload 应有值。
+
+3) 测试超时情形：
+   - 可通过不发送设备 ACK，等待超时后观察 DB 中 status 是否变为 'failed'，ack_payload 包含 { ok:false, message:'ack timeout' }。
+   - 若后续真实 ACK 到达（ok=true），应覆盖之前的 failed/expired 状态。
+
+4) 幂等性说明：
+   - 若 status 已为 'acked'，后续同 cmdId 的超时/失败不会覆盖。
+   - 但真实设备 ACK（ok=true）会覆盖 failed/expired。
+
 故障排查：若发布到 MQTT 失败，路由会把命令状态更新为 `failed` 并在 HTTP 返回中包含错误简述；检查服务端日志中的 `[MQTT EVENT] error` 或 `publishCommand failed` 日志以定位问题。
