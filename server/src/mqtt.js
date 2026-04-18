@@ -240,12 +240,13 @@ export async function startMqtt() {
   if (client) return client;
 
   const opts = {
-    protocolVersion: 5,
+    protocolVersion: 4,
     clientId: DEFAULT_CLIENT_ID,
     keepalive: 30,
     clean: false,
     reconnectPeriod: reconnectPeriodMs,
     rejectUnauthorized,
+    connectTimeout: 30000,
   };
   if (MQTT_USERNAME) opts.username = MQTT_USERNAME;
   if (MQTT_PASSWORD) opts.password = MQTT_PASSWORD;
