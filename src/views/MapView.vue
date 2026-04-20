@@ -10,7 +10,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { loadAmapSdk, initMap, createMarker, initGeolocation } from '../utils/amap.js'
-import initTrackRenderer from '../utils/trackRenderer.js'
+import initTrackService from '../utils/trackService.js'
 import { useAppStore } from '../stores'
 import { showMessage } from '../composables/useMessage'
 
@@ -22,34 +22,23 @@ const isLocating = ref(false)
 let map
 let marker
 let geolocation
-let trackRenderer = null
+let trackService = null
 const trackReady = ref(false)
 
 async function loadTrack() {
-  if (!trackRenderer) {
-    console.warn('[MapView] trackRenderer not ready')
+  if (!trackService) {
+    console.warn('[MapView] trackService not ready')
     await showMessage({ title: '轨迹未就绪', message: '地图尚未初始化', type: 'warn' })
     return
   }
 
   try {
     const deviceId = 'dev-001'
-    const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
-    const url = `${backendBase.replace(/\/$/, '')}/api/track?deviceId=${encodeURIComponent(deviceId)}`
-    console.debug('[MapView] fetching track', url)
-    const resp = await fetch(url)
-    if (!resp.ok) {
-      console.error('[MapView] fetch track failed', resp.status)
-      await showMessage({ title: '轨迹加载失败', message: `HTTP ${resp.status}`, type: 'error' })
-      return
-    }
-    const data = await resp.json()
-    const pts = Array.isArray(data.points) ? data.points : []
-    const res = await trackRenderer.renderTrack(pts)
-    if (!res.rendered) {
+    const { result, raw } = await trackService.loadTrack({ deviceId })
+    if (!result || !result.rendered) {
       await showMessage({ title: '无轨迹数据', message: '无有效轨迹点', type: 'warn' })
     }
-    console.debug('[MapView] track rendered', (data && data.points) ? data.points.length : 0)
+    console.debug('[MapView] track rendered', (raw && raw.points) ? raw.points.length : 0)
   } catch (e) {
     console.error('[MapView] load track error', e)
     await showMessage({ title: '轨迹加载异常', message: e?.message || String(e), type: 'error' })
@@ -235,12 +224,12 @@ onMounted(async () => {
 
     // 初始化轨迹渲染器并尝试加载轨迹数据（幂等替换）
     try {
-      trackRenderer = initTrackRenderer(map)
+      trackService = initTrackService(map)
       trackReady.value = true
       // 自动触发一次加载
       await loadTrack()
     } catch (e) {
-      console.warn('[MapView] initTrackRenderer failed', e)
+      console.warn('[MapView] initTrackService failed', e)
     }
 
     // 权限优先检查：若浏览器支持 navigator.permissions，则优先查询 geolocation

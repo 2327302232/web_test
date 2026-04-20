@@ -37,6 +37,7 @@ jobs:
         env:
           VITE_AMAP_KEY: ${{ secrets.VITE_AMAP_KEY }}
           VITE_AMAP_SECURITY_JS_CODE: ${{ secrets.VITE_AMAP_SECURITY_JS_CODE }}
+          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
         run: npm run build
 
       - name: Upload artifact
