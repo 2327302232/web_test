@@ -15,6 +15,7 @@ import { initDb, db } from './db.js';
 import { startMqtt, stopMqtt, on as onMqtt } from './mqtt.js';
 import express from 'express';
 import commandRouter from './api/command.js';
+import trackRouter from './api/track.js';
 
 let shuttingDown = false;
 let httpServer = null;
@@ -34,11 +35,22 @@ async function start() {
     // 挂载并启动内置 HTTP 接口（若需要使用 express）
     try {
       const app = express();
+      // Simple CORS middleware to allow frontend dev server access.
+      app.use((req, res, next) => {
+        const allowed = process.env.CORS_ORIGIN || '*';
+        res.setHeader('Access-Control-Allow-Origin', allowed);
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        // If you need to support credentials, set Access-Control-Allow-Credentials accordingly and avoid '*'
+        if (req.method === 'OPTIONS') return res.sendStatus(204);
+        next();
+      });
       app.use(express.json({ limit: '1mb' }));
       // 健康检查
       app.get('/api/health', (req, res) => res.json({ ok: true }));
-      // mount command router
+      // mount command router and track router
       app.use(commandRouter);
+      app.use(trackRouter);
 
       const port = process.env.PORT ? Number(process.env.PORT) : 8787;
       httpServer = app.listen(port, () => console.log(`HTTP server listening on port ${port}`));

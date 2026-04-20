@@ -1,10 +1,16 @@
 <template>
-  <div id="map" class="map"></div>
+  <div class="map-container">
+    <div id="map" class="map"></div>
+    <div class="map-controls">
+      <button @click="loadTrack">加载轨迹</button>
+    </div>
+  </div>
 </template>
 
 <script setup>
 import { onMounted, ref } from 'vue'
 import { loadAmapSdk, initMap, createMarker, initGeolocation } from '../utils/amap.js'
+import initTrackRenderer from '../utils/trackRenderer.js'
 import { useAppStore } from '../stores'
 import { showMessage } from '../composables/useMessage'
 
@@ -16,6 +22,39 @@ const isLocating = ref(false)
 let map
 let marker
 let geolocation
+let trackRenderer = null
+const trackReady = ref(false)
+
+async function loadTrack() {
+  if (!trackRenderer) {
+    console.warn('[MapView] trackRenderer not ready')
+    await showMessage({ title: '轨迹未就绪', message: '地图尚未初始化', type: 'warn' })
+    return
+  }
+
+  try {
+    const deviceId = 'dev-001'
+    const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
+    const url = `${backendBase.replace(/\/$/, '')}/api/track?deviceId=${encodeURIComponent(deviceId)}`
+    console.debug('[MapView] fetching track', url)
+    const resp = await fetch(url)
+    if (!resp.ok) {
+      console.error('[MapView] fetch track failed', resp.status)
+      await showMessage({ title: '轨迹加载失败', message: `HTTP ${resp.status}`, type: 'error' })
+      return
+    }
+    const data = await resp.json()
+    const pts = Array.isArray(data.points) ? data.points : []
+    const res = await trackRenderer.renderTrack(pts)
+    if (!res.rendered) {
+      await showMessage({ title: '无轨迹数据', message: '无有效轨迹点', type: 'warn' })
+    }
+    console.debug('[MapView] track rendered', (data && data.points) ? data.points.length : 0)
+  } catch (e) {
+    console.error('[MapView] load track error', e)
+    await showMessage({ title: '轨迹加载异常', message: e?.message || String(e), type: 'error' })
+  }
+}
 
 async function locate() {
   if (!geolocation) {
@@ -194,6 +233,16 @@ onMounted(async () => {
     geolocation = await initGeolocation()
     status.value = '地图已加载'
 
+    // 初始化轨迹渲染器并尝试加载轨迹数据（幂等替换）
+    try {
+      trackRenderer = initTrackRenderer(map)
+      trackReady.value = true
+      // 自动触发一次加载
+      await loadTrack()
+    } catch (e) {
+      console.warn('[MapView] initTrackRenderer failed', e)
+    }
+
     // 权限优先检查：若浏览器支持 navigator.permissions，则优先查询 geolocation
     try {
       if (navigator.permissions && navigator.permissions.query) {
@@ -241,7 +290,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.map { height: 100vh; width: 100vw; }
+.map-container { position: relative; height: 100vh; width: 100vw; }
+.map { height: 100%; width: 100%; }
+.map-controls { position: absolute; top: 12px; left: 12px; z-index: 2000; }
+.map-controls button { padding: 8px 10px; background: white; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
 .row { margin: 6px 0; }
 button { padding: 8px 10px; }
 code { user-select: all; }
