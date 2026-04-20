@@ -5,7 +5,7 @@
   "description": "Minimal backend for storing GPS tracks (better-sqlite3)",
   "main": "src/index.js",
   "scripts": {
-    "dev": "node src/index.js",
+    "dev": "node src/server.js --watch",
     "start": "node src/server.js"
   },
   "dependencies": {
