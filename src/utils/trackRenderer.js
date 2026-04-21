@@ -1,6 +1,7 @@
 // Track renderer helper for drawing GPS tracks on AMap map instances.
 // Exports: initTrackRenderer(map) -> { renderTrack, clearTrack, appendPoints }
 import { addPolyline, createMarker } from './amap.js'
+import { showMessage } from '../composables/useMessage'
 
 function _normalizeTs(raw) {
   const n = Number(raw)
@@ -53,6 +54,7 @@ export function initTrackRenderer(map) {
   let startMarker = null
   let endMarker = null
   let singleMarker = null
+  let pointMarkers = []
   let lastPoints = []
 
   function clearTrack() {
@@ -61,6 +63,11 @@ export function initTrackRenderer(map) {
       if (startMarker && typeof startMarker.setMap === 'function') startMarker.setMap(null)
       if (endMarker && typeof endMarker.setMap === 'function') endMarker.setMap(null)
       if (singleMarker && typeof singleMarker.setMap === 'function') singleMarker.setMap(null)
+      if (Array.isArray(pointMarkers) && pointMarkers.length) {
+        for (const m of pointMarkers) {
+          try { if (m && typeof m.setMap === 'function') m.setMap(null) } catch (e) { /* ignore individual failures */ }
+        }
+      }
     } catch (e) {
       console.warn('[trackRenderer] clear error', e)
     } finally {
@@ -68,16 +75,62 @@ export function initTrackRenderer(map) {
       startMarker = null
       endMarker = null
       singleMarker = null
+      pointMarkers = []
       lastPoints = []
     }
   }
 
   function _createMarkerAtPoint(p, opts = {}) {
     try {
-      return createMarker(map, [p.lng, p.lat], opts)
+      const marker = createMarker(map, [p.lng, p.lat], opts)
+      try { _attachClickToMarker(marker, p) } catch (e) { /* ignore */ }
+      return marker
     } catch (e) {
       console.warn('[trackRenderer] createMarker failed', e)
       return null
+    }
+  }
+
+  function _createCircleMarkerAtPoint(p, style = {}) {
+    try {
+      const size = Number(style.size) || 12
+      const color = style.color || '#ff8800'
+      const border = style.border || '#ffffff'
+      const borderWidth = Number(style.borderWidth) || 2
+      const html = `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${borderWidth}px solid ${border};box-shadow:0 0 4px rgba(0,0,0,0.12)"></div>`
+      const opts = { content: html }
+      if (typeof window !== 'undefined' && window.AMap && typeof window.AMap.Pixel === 'function') {
+        opts.offset = new window.AMap.Pixel(Math.round(-size / 2), Math.round(-size / 2))
+      }
+      const marker = createMarker(map, [p.lng, p.lat], opts)
+      try { _attachClickToMarker(marker, p) } catch (e) { /* ignore */ }
+      return marker
+    } catch (e) {
+      console.warn('[trackRenderer] createCircleMarker failed', e)
+      return _createMarkerAtPoint(p, {})
+    }
+  }
+
+  function _attachClickToMarker(marker, point) {
+    if (!marker || !point) return
+    try {
+      const handler = async () => {
+        try {
+          const title = '轨迹点信息'
+          const message = `经纬度: ${point.lat}, ${point.lng}`
+          const details = JSON.stringify(point, null, 2)
+          await showMessage({ title, message, details, showDetails: true })
+        } catch (e) {
+          console.warn('[trackRenderer] showMessage failed', e)
+        }
+      }
+      if (typeof marker.on === 'function') {
+        marker.on('click', handler)
+      } else if (typeof marker.addEventListener === 'function') {
+        marker.addEventListener('click', handler)
+      }
+    } catch (e) {
+      console.warn('[trackRenderer] attachClick failed', e)
     }
   }
 
@@ -98,7 +151,8 @@ export function initTrackRenderer(map) {
       clearTrack()
 
       if (clean.length === 1) {
-        singleMarker = _createMarkerAtPoint(clean[0], { title: 'track point' })
+        const singleStyle = { size: 12, color: '#ff8800', border: '#ffffff', borderWidth: 2 }
+        singleMarker = _createCircleMarkerAtPoint(clean[0], singleStyle)
         lastPoints = clean
         console.debug('[trackRenderer] rendered single marker')
         resolve({ rendered: true, type: 'single', points: clean })
@@ -158,9 +212,25 @@ export function initTrackRenderer(map) {
         console.error('[trackRenderer] addPolyline failed', e)
       }
 
-      // start / end markers
-      startMarker = _createMarkerAtPoint(clean[0], { title: 'start' })
-      endMarker = _createMarkerAtPoint(clean[clean.length - 1], { title: 'end' })
+      // start / end markers (larger)
+      const startStyle = { size: 16, color: '#2ecc71', border: '#ffffff', borderWidth: 2 }
+      const endStyle = { size: 16, color: '#e74c3c', border: '#ffffff', borderWidth: 2 }
+      startMarker = _createCircleMarkerAtPoint(clean[0], startStyle)
+      endMarker = _createCircleMarkerAtPoint(clean[clean.length - 1], endStyle)
+
+      // per-point small markers (exclude first and last so start/end keep larger size)
+      const smallStyle = { size: 10, color: '#ff8800', border: '#ffffff', borderWidth: 1 }
+      pointMarkers = []
+      if (clean.length > 2) {
+        for (let i = 1; i < clean.length - 1; i++) {
+          try {
+            const m = _createCircleMarkerAtPoint(clean[i], smallStyle)
+            if (m) pointMarkers.push(m)
+          } catch (e) {
+            console.warn('[trackRenderer] create point marker failed', e)
+          }
+        }
+      }
 
       lastPoints = clean
       console.debug('[trackRenderer] rendered polyline points', path.length)
