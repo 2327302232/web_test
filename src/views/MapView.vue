@@ -11,6 +11,7 @@
 import { onMounted, ref } from 'vue'
 import { loadAmapSdk, initMap, createMarker, initGeolocation } from '../utils/amap.js'
 import initTrackService from '../utils/trackService.js'
+import { splitByGap } from '../utils/segment.js'
 import { useAppStore } from '../stores'
 import { showMessage } from '../composables/useMessage'
 
@@ -24,6 +25,17 @@ let marker
 let geolocation
 let trackService = null
 const trackReady = ref(false)
+let segmentMarkers = []
+
+function _clearSegmentMarkers() {
+  try {
+    if (Array.isArray(segmentMarkers) && segmentMarkers.length) {
+      for (const m of segmentMarkers) {
+        try { if (m && typeof m.setMap === 'function') m.setMap(null) } catch (e) { /* ignore */ }
+      }
+    }
+  } catch (e) { /* ignore */ } finally { segmentMarkers = [] }
+}
 
 async function loadTrack() {
   if (!trackService) {
@@ -39,6 +51,34 @@ async function loadTrack() {
       await showMessage({ title: '无轨迹数据', message: '无有效轨迹点', type: 'warn' })
     }
     console.debug('[MapView] track rendered', (raw && raw.points) ? raw.points.length : 0)
+    // draw per-segment start/end markers
+    try {
+      const cleaned = (result && result.points) ? result.points : (raw && Array.isArray(raw.points) ? raw.points : [])
+      const segments = splitByGap(cleaned)
+      _clearSegmentMarkers()
+      if (Array.isArray(segments) && segments.length) {
+        for (const seg of segments) {
+          try {
+            const s = seg.points && seg.points[0]
+            const e = seg.points && seg.points[seg.points.length - 1]
+            if (s) {
+              const html = `<div style="width:16px;height:16px;border-radius:50%;background:#2ecc71;border:2px solid #ffffff;box-shadow:0 0 4px rgba(0,0,0,0.12)"></div>`
+              const opts = { content: html }
+              if (typeof window !== 'undefined' && window.AMap && typeof window.AMap.Pixel === 'function') opts.offset = new window.AMap.Pixel(-8, -8)
+              const m = createMarker(map, [s.lng, s.lat], opts)
+              segmentMarkers.push(m)
+            }
+            if (e) {
+              const html2 = `<div style="width:16px;height:16px;border-radius:50%;background:#e74c3c;border:2px solid #ffffff;box-shadow:0 0 4px rgba(0,0,0,0.12)"></div>`
+              const opts2 = { content: html2 }
+              if (typeof window !== 'undefined' && window.AMap && typeof window.AMap.Pixel === 'function') opts2.offset = new window.AMap.Pixel(-8, -8)
+              const m2 = createMarker(map, [e.lng, e.lat], opts2)
+              segmentMarkers.push(m2)
+            }
+          } catch (e) { /* ignore individual marker failures */ }
+        }
+      }
+    } catch (e) { console.warn('[MapView] segment markers failed', e) }
   } catch (e) {
     console.error('[MapView] load track error', e)
     await showMessage({ title: '轨迹加载异常', message: e?.message || String(e), type: 'error' })

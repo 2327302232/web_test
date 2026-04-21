@@ -50,6 +50,7 @@ import helmetIcon from '../assets/helmet.svg'
 import meIcon from '../assets/me.svg'
 import configIcon from '../assets/config.svg'
 import logIcon from '../assets/log.svg'
+import { closePointPanel } from '../composables/usePointPanel.js'
 
 export default {
   name: 'FloatTaskbar',
@@ -71,6 +72,7 @@ export default {
     // 跳转到指定路由
     navigate(path) {
       if (this.$router && path) {
+        try { closePointPanel() } catch (e) { /* ignore close failures */ }
         this.$router.push(path)
       }
       // 点击后自动收起任务栏（可按需修改）
@@ -121,7 +123,7 @@ export default {
   border: none;
   background: var(--ftb-bg); /* 与面板使用相同透明度 */
   color: var(--ftb-accent);
-  box-shadow: 0 4px 10px rgba(255, 255, 255, 0.74);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.14);
   cursor: pointer;
   transition: transform 220ms, background 200ms, left 200ms;
   z-index: 1220;

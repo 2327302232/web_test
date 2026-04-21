@@ -4,15 +4,21 @@ import { initDb, insertGpsPoint } from '../src/db.js'
 async function main() {
   await initDb()
   const now = Date.now()
-  const baseLng = 113.3931
-  const baseLat = 23.0394
+  const baseLng = 113.394
+  const baseLat = 23.031
   const deviceId = process.argv[2] || 'dev-001'
 
-  const points = [
-    { ts: now - 60000, lng: baseLng, lat: baseLat, speed: 0, battery: 100 },
-    { ts: now - 30000, lng: baseLng + 0.001, lat: baseLat + 0.001, speed: 2, battery: 99 },
-    { ts: now, lng: baseLng + 0.002, lat: baseLat + 0.0015, speed: 3, battery: 98 }
-  ]
+  const numPoints = 10
+  const points = Array.from({ length: numPoints }, (_, i) => {
+    const ts = now - (numPoints - 1 - i) * 30
+    return {
+      ts,
+      lng: baseLng - 0.0002 * i,
+      lat: baseLat + 0.00015 * i,
+      speed: i === 0 ? 0 : 2 + i,
+      battery: 100 - i
+    }
+  })
 
   for (const p of points) {
     try {

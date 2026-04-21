@@ -1,7 +1,8 @@
 // Track renderer helper for drawing GPS tracks on AMap map instances.
 // Exports: initTrackRenderer(map) -> { renderTrack, clearTrack, appendPoints }
 import { addPolyline, createMarker } from './amap.js'
-import { showMessage } from '../composables/useMessage'
+import { showPointPanel } from '../composables/usePointPanel'
+import { splitByGap } from './segment.js'
 
 function _normalizeTs(raw) {
   const n = Number(raw)
@@ -56,9 +57,80 @@ export function initTrackRenderer(map) {
   let singleMarker = null
   let pointMarkers = []
   let lastPoints = []
+  let lastSegments = []
+  let selectedMarker = null
+
+  // panel close handler (will be registered on window)
+  function _handlePanelCloseEvent(e) {
+    try { _clearSelection() } catch (err) { /* ignore */ }
+  }
+
+  function _makeCircleHtml(style = {}) {
+    const size = Number(style.size) || 12
+    const color = style.color || '#ff8800'
+    const border = style.border || '#ffffff'
+    const borderWidth = Number(style.borderWidth) || 2
+    const boxShadow = style.boxShadow || '0 0 4px rgba(0,0,0,0.12)'
+    return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${borderWidth}px solid ${border};box-shadow:${boxShadow}"></div>`
+  }
+
+  function _applyStyleToMarker(marker, style = {}) {
+    try {
+      if (!marker) return
+      const html = _makeCircleHtml(style)
+      if (typeof marker.setContent === 'function') marker.setContent(html)
+      if (typeof marker.setOffset === 'function' && typeof window !== 'undefined' && window.AMap && typeof window.AMap.Pixel === 'function') {
+        const size = Number(style.size) || 12
+        try { marker.setOffset(new window.AMap.Pixel(Math.round(-size / 2), Math.round(-size / 2))) } catch (e) { /* ignore offset failures */ }
+      }
+      marker.__trackStyle = style
+    } catch (e) {
+      console.warn('[trackRenderer] applyStyleToMarker failed', e)
+    }
+  }
+
+  function _clearSelection() {
+    try {
+      if (selectedMarker) {
+        const base = selectedMarker.__baseStyle || selectedMarker.__trackStyle || {}
+        _applyStyleToMarker(selectedMarker, base)
+        selectedMarker = null
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  function _getMarkerForIndex(i) {
+    try {
+      if (!Array.isArray(lastPoints) || lastPoints.length === 0) return null
+      if (i <= 0) return startMarker
+      if (i >= lastPoints.length - 1) return endMarker
+      const idx = i - 1
+      return Array.isArray(pointMarkers) && pointMarkers[idx] ? pointMarkers[idx] : null
+    } catch (e) {
+      return null
+    }
+  }
+
+  function _selectMarker(marker) {
+    try {
+      if (!marker) return
+      if (selectedMarker === marker) return
+      if (selectedMarker) {
+        const basePrev = selectedMarker.__baseStyle || selectedMarker.__trackStyle || {}
+        _applyStyleToMarker(selectedMarker, basePrev)
+      }
+      selectedMarker = marker
+      const base = marker.__baseStyle || marker.__trackStyle || {}
+      const selStyle = Object.assign({}, base, { border: '#2c9cff', borderWidth: Math.max(2, Number(base.borderWidth || 2)), boxShadow: '0 0 8px rgba(44,156,255,0.7)' })
+      _applyStyleToMarker(marker, selStyle)
+    } catch (e) {
+      console.warn('[trackRenderer] selectMarker failed', e)
+    }
+  }
 
   function clearTrack() {
     try {
+      try { if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') window.removeEventListener('pointPanel:close', _handlePanelCloseEvent) } catch (ee) { /* ignore */ }
       if (currentPolyline && typeof currentPolyline.setMap === 'function') currentPolyline.setMap(null)
       if (startMarker && typeof startMarker.setMap === 'function') startMarker.setMap(null)
       if (endMarker && typeof endMarker.setMap === 'function') endMarker.setMap(null)
@@ -77,6 +149,7 @@ export function initTrackRenderer(map) {
       singleMarker = null
       pointMarkers = []
       lastPoints = []
+      selectedMarker = null
     }
   }
 
@@ -94,15 +167,14 @@ export function initTrackRenderer(map) {
   function _createCircleMarkerAtPoint(p, style = {}) {
     try {
       const size = Number(style.size) || 12
-      const color = style.color || '#ff8800'
-      const border = style.border || '#ffffff'
-      const borderWidth = Number(style.borderWidth) || 2
-      const html = `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${borderWidth}px solid ${border};box-shadow:0 0 4px rgba(0,0,0,0.12)"></div>`
+      const html = _makeCircleHtml(style)
       const opts = { content: html }
       if (typeof window !== 'undefined' && window.AMap && typeof window.AMap.Pixel === 'function') {
         opts.offset = new window.AMap.Pixel(Math.round(-size / 2), Math.round(-size / 2))
       }
       const marker = createMarker(map, [p.lng, p.lat], opts)
+      // store base style so we can revert when unselecting
+      try { marker.__baseStyle = Object.assign({}, style); marker.__trackStyle = marker.__baseStyle } catch (e) { /* ignore */ }
       try { _attachClickToMarker(marker, p) } catch (e) { /* ignore */ }
       return marker
     } catch (e) {
@@ -117,11 +189,61 @@ export function initTrackRenderer(map) {
       const handler = async () => {
         try {
           const title = '轨迹点信息'
-          const message = `经纬度: ${point.lat}, ${point.lng}`
-          const details = JSON.stringify(point, null, 2)
-          await showMessage({ title, message, details, showDetails: true })
+
+          // mark this marker as selected (visual)
+          try { _selectMarker(marker) } catch (e) { /* ignore */ }
+
+          const findIndex = () => {
+            if (!Array.isArray(lastPoints)) return -1
+            return lastPoints.findIndex(p => p && p.ts === point.ts && p.lng === point.lng && p.lat === point.lat)
+          }
+
+          const openForIndex = (i) => {
+            if (!Array.isArray(lastPoints) || lastPoints.length === 0) {
+              // still select the clicked marker
+              try { _selectMarker(marker) } catch (e) { /* ignore */ }
+              const p = showPointPanel({ title, data: point })
+              if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
+              return
+            }
+            const idx = Math.max(0, Math.min(i, lastPoints.length - 1))
+            // select marker for this index (start / middle / end)
+            try { const m = _getMarkerForIndex(idx); if (m) _selectMarker(m) } catch (e) { /* ignore */ }
+
+            // determine segment boundaries (if available) and restrict prev/next to same segment
+            let onPrevFn = null
+            let onNextFn = null
+            try {
+              if (Array.isArray(lastSegments) && lastSegments.length) {
+                const seg = lastSegments.find(s => idx >= s.startIndex && idx <= s.endIndex)
+                if (seg) {
+                  if (idx > seg.startIndex) onPrevFn = () => openForIndex(idx - 1)
+                  if (idx < seg.endIndex) onNextFn = () => openForIndex(idx + 1)
+                } else {
+                  onPrevFn = () => openForIndex(idx - 1)
+                  onNextFn = () => openForIndex(idx + 1)
+                }
+              } else {
+                onPrevFn = () => openForIndex(idx - 1)
+                onNextFn = () => openForIndex(idx + 1)
+              }
+            } catch (e) { onPrevFn = () => openForIndex(idx - 1); onNextFn = () => openForIndex(idx + 1) }
+
+            const p = showPointPanel({
+              title,
+              data: lastPoints[idx],
+              isPlaying: false,
+              onPrev: onPrevFn,
+              onNext: onNextFn,
+              onTogglePlay: (playing) => { /* placeholder for playback control */ }
+            })
+            if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
+          }
+
+          const idx = findIndex()
+          openForIndex(idx >= 0 ? idx : 0)
         } catch (e) {
-          console.warn('[trackRenderer] showMessage failed', e)
+          console.warn('[trackRenderer] showPointPanel failed', e)
         }
       }
       if (typeof marker.on === 'function') {
@@ -149,6 +271,18 @@ export function initTrackRenderer(map) {
 
       // idempotent: clear previous
       clearTrack()
+
+      // register panel-close listener to ensure selection is cleared
+      try {
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+          window.addEventListener('pointPanel:close', _handlePanelCloseEvent)
+        }
+      } catch (e) { /* ignore */ }
+
+      // compute segments (by time gap) for navigation restrictions
+      try {
+        lastSegments = splitByGap(clean, options.gapMs || 30 * 60 * 1000)
+      } catch (e) { lastSegments = [] }
 
       if (clean.length === 1) {
         const singleStyle = { size: 12, color: '#ff8800', border: '#ffffff', borderWidth: 2 }
@@ -249,7 +383,7 @@ export function initTrackRenderer(map) {
     clearTrack,
     appendPoints,
     // expose lastPoints for debugging/tests
-    _internal: { getLastPoints: () => lastPoints }
+    _internal: { getLastPoints: () => lastPoints, getLastSegments: () => lastSegments }
   }
 }
 
