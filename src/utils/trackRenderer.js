@@ -51,7 +51,7 @@ function _preprocess(points) {
 export function initTrackRenderer(map) {
   if (!map) throw new Error('map is required')
 
-  let currentPolyline = null
+  let currentPolylines = []
   let startMarker = null
   let endMarker = null
   let singleMarker = null
@@ -131,7 +131,11 @@ export function initTrackRenderer(map) {
   function clearTrack() {
     try {
       try { if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') window.removeEventListener('pointPanel:close', _handlePanelCloseEvent) } catch (ee) { /* ignore */ }
-      if (currentPolyline && typeof currentPolyline.setMap === 'function') currentPolyline.setMap(null)
+      if (Array.isArray(currentPolylines) && currentPolylines.length) {
+        for (const pl of currentPolylines) {
+          try { if (pl && typeof pl.setMap === 'function') pl.setMap(null) } catch (e) { /* ignore individual failures */ }
+        }
+      }
       if (startMarker && typeof startMarker.setMap === 'function') startMarker.setMap(null)
       if (endMarker && typeof endMarker.setMap === 'function') endMarker.setMap(null)
       if (singleMarker && typeof singleMarker.setMap === 'function') singleMarker.setMap(null)
@@ -143,7 +147,7 @@ export function initTrackRenderer(map) {
     } catch (e) {
       console.warn('[trackRenderer] clear error', e)
     } finally {
-      currentPolyline = null
+      currentPolylines = []
       startMarker = null
       endMarker = null
       singleMarker = null
@@ -293,23 +297,42 @@ export function initTrackRenderer(map) {
         return
       }
 
-      // use array pairs ([lng, lat]) which AMap reliably accepts
-      const path = clean.map(p => [Number(p.lng), Number(p.lat)])
-
+      // compute per-segment paths and draw each segment separately so different segments are not connected
+      const fullPath = clean.map(p => [Number(p.lng), Number(p.lat)])
       try {
         const polylineOpts = Object.assign({ strokeColor: '#ff8800', strokeWeight: 2, strokeOpacity: 1 }, options.polyline || {})
-        currentPolyline = addPolyline(map, path, polylineOpts)
-        // try fitting map view to the drawn polyline; fall back to bbox-based center/zoom
+        currentPolylines = []
+        // draw each segment (segments computed earlier by splitByGap)
+        if (Array.isArray(lastSegments) && lastSegments.length) {
+          for (const seg of lastSegments) {
+            if (!Array.isArray(seg.points) || seg.points.length < 2) continue
+            const segPath = seg.points.map(p => [Number(p.lng), Number(p.lat)])
+            try {
+              const pl = addPolyline(map, segPath, polylineOpts)
+              currentPolylines.push(pl)
+            } catch (eSeg) {
+              console.warn('[trackRenderer] addPolyline for segment failed', eSeg)
+            }
+          }
+        } else {
+          // fallback: draw all points as a single polyline
+          try { const pl = addPolyline(map, fullPath, polylineOpts); currentPolylines.push(pl) } catch (eAll) { console.warn('[trackRenderer] addPolyline fallback failed', eAll) }
+        }
+
+        // try fitting map view to the drawn polylines; fall back to bbox-based center/zoom
         try {
-          if (map && typeof map.setFitView === 'function') {
-            map.setFitView([currentPolyline])
+          if (map && typeof map.setFitView === 'function' && currentPolylines.length) {
+            map.setFitView(currentPolylines)
+          } else {
+            // no polylines (maybe only isolated points) -> fallback to bbox fit using full path
+            throw new Error('no-polylines')
           }
         } catch (e2) {
-          console.warn('[trackRenderer] setFitView failed, falling back to bbox fit', e2)
+          console.warn('[trackRenderer] setFitView failed or no polylines, falling back to bbox fit', e2)
           try {
             // compute bounding box
             let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity
-            for (const pt of path) {
+            for (const pt of fullPath) {
               const lng = Number(pt[0])
               const lat = Number(pt[1])
               if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
@@ -367,7 +390,7 @@ export function initTrackRenderer(map) {
       }
 
       lastPoints = clean
-      console.debug('[trackRenderer] rendered polyline points', path.length)
+      console.debug('[trackRenderer] rendered polyline points', fullPath.length)
       resolve({ rendered: true, type: 'polyline', points: clean })
     })
   }
