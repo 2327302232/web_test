@@ -1,5 +1,5 @@
 <template>
-  <div v-show="visible" class="pip-container" role="region" aria-label="点信息面板">
+  <div ref="containerRef" v-show="visible" class="pip-container" role="region" aria-label="点信息面板">
     <div class="pip-header">
       <div class="pip-left" aria-hidden="true"></div>
         <div class="pip-center">
@@ -29,10 +29,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, defineExpose, computed } from 'vue'
+import { ref, reactive, defineExpose, computed, onMounted, onBeforeUnmount } from 'vue'
 import panelIcons from '../lib/panelIcons.js'
 
 const visible = ref(false)
+const containerRef = ref(null)
 const options = reactive({ title: '', data: null, onPrev: null, onNext: null, onTogglePlay: null })
 const icons = reactive({ prev: panelIcons.prev, play: panelIcons.play, stop: panelIcons.stop, next: panelIcons.next })
 const isPlaying = ref(false)
@@ -99,6 +100,89 @@ function setIcons(ic = {}) {
 }
 
 defineExpose({ open, close, prev: onPrev, next: onNext, togglePlay: onTogglePlay, setIcons })
+
+// 精确的双击拦截：只在真正的双击（时间短、位移小）时阻止默认缩放
+let _lastTapTime = 0
+let _lastTapX = 0
+let _lastTapY = 0
+let _tapTimeout = null
+let _touchStartX = 0
+let _touchStartY = 0
+let _touchMoved = false
+const DOUBLE_TAP_MAX_DELAY = 300
+const DOUBLE_TAP_MAX_DISTANCE = 30
+
+function _onTouchStart(e) {
+  if (!visible.value) return
+  if (!e.touches || e.touches.length > 1) { _touchMoved = true; return }
+  _touchMoved = false
+  const t = e.touches[0]
+  _touchStartX = t.clientX
+  _touchStartY = t.clientY
+}
+
+function _onTouchMove(e) {
+  if (_touchMoved) return
+  if (!e.touches || e.touches.length === 0) return
+  const t = e.touches[0]
+  const dx = t.clientX - _touchStartX
+  const dy = t.clientY - _touchStartY
+  if (Math.abs(dx) > 10 || Math.abs(dy) > 10) _touchMoved = true
+}
+
+function _onTouchEnd(e) {
+  try {
+    if (!visible.value) return
+    if (!e.changedTouches || e.changedTouches.length === 0) return
+    if (_touchMoved) { _lastTapTime = 0; return }
+    const t = e.changedTouches[0]
+    const now = Date.now()
+    const dx = t.clientX - _lastTapX
+    const dy = t.clientY - _lastTapY
+    const distSq = dx * dx + dy * dy
+    if (_lastTapTime && (now - _lastTapTime) <= DOUBLE_TAP_MAX_DELAY && distSq <= (DOUBLE_TAP_MAX_DISTANCE * DOUBLE_TAP_MAX_DISTANCE)) {
+      // 识别为双击：阻止默认双击缩放，并触发一次点击
+      e.preventDefault()
+      e.stopPropagation()
+      const el = document.elementFromPoint(t.clientX, t.clientY) || e.target
+      try { if (el && typeof el.click === 'function') el.click() } catch (err) { /* ignore */ }
+      _lastTapTime = 0
+      _lastTapX = 0; _lastTapY = 0
+      if (_tapTimeout) { clearTimeout(_tapTimeout); _tapTimeout = null }
+      return
+    }
+    // 记录为单次点击，等待可能的下一次（双击）
+    _lastTapTime = now
+    _lastTapX = t.clientX
+    _lastTapY = t.clientY
+    if (_tapTimeout) clearTimeout(_tapTimeout)
+    _tapTimeout = setTimeout(() => { _lastTapTime = 0; _tapTimeout = null }, DOUBLE_TAP_MAX_DELAY + 50)
+  } catch (err) {
+    /* ignore */
+  }
+}
+
+onMounted(() => {
+  try {
+    if (containerRef.value && containerRef.value.addEventListener) {
+      containerRef.value.addEventListener('touchstart', _onTouchStart, { passive: true })
+      containerRef.value.addEventListener('touchmove', _onTouchMove, { passive: true })
+      // touchend must be passive:false to allow preventDefault
+      containerRef.value.addEventListener('touchend', _onTouchEnd, { passive: false })
+    }
+  } catch (e) { /* ignore */ }
+})
+
+onBeforeUnmount(() => {
+  try {
+    if (containerRef.value && containerRef.value.removeEventListener) {
+      containerRef.value.removeEventListener('touchstart', _onTouchStart)
+      containerRef.value.removeEventListener('touchmove', _onTouchMove)
+      containerRef.value.removeEventListener('touchend', _onTouchEnd)
+    }
+  } catch (e) { /* ignore */ }
+  if (_tapTimeout) { clearTimeout(_tapTimeout); _tapTimeout = null }
+})
 
 
 
