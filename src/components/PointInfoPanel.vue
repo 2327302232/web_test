@@ -29,7 +29,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, defineExpose, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import panelIcons from '../lib/panelIcons.js'
 
 const visible = ref(false)

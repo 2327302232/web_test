@@ -16,7 +16,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, defineExpose } from 'vue'
+import { ref, reactive } from 'vue'
 
 const visible = ref(false)
 const showDetails = ref(false)

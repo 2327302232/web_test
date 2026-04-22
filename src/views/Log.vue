@@ -1,22 +1,26 @@
+
 <template>
-  <div class="panel-view" style="padding:16px;">
-    
-    <div style="margin-bottom:12px">
-      <label>设备 ID：<input v-model="deviceId" style="margin-left:8px" /></label>
-      <button @click="load" style="margin-left:12px">加载</button>
-      
+  <div class="log-panel-view">
+    <div class="log-header">
+      <label class="log-label">设备 ID：
+        <select v-model="deviceId" class="log-select">
+          <option value="dev-001">dev-001</option>
+          <option value="dev-002">dev-002</option>
+          <option value="dev-003">dev-003</option>
+        </select>
+      </label>
+      <button @click="load" class="log-btn">加载</button>
     </div>
 
-    <div v-if="segments.length === 0">无骑行分段或尚未加载。</div>
-    <ul v-else>
-      <li v-for="(seg, idx) in segments" :key="idx" style="margin-bottom:12px; padding:8px; border:1px solid #eee; border-radius:6px">
-        <div><strong>段 {{ idx + 1 }}</strong> — 点数: {{ seg.points.length }}</div>
-        <div>起点时间: {{ formatTs(seg.points[0]?.ts) }} ； 终点时间: {{ formatTs(seg.points[seg.points.length-1]?.ts) }}</div>
-        <div>起点: {{ formatLatLng(seg.points[0]) }} ； 终点: {{ formatLatLng(seg.points[seg.points.length-1]) }}</div>
+    <div v-if="segments.length === 0" class="log-empty">无骑行分段或尚未加载。</div>
+    <ul v-else class="log-segment-list">
+      <li v-for="(seg, idx) in segments" :key="idx" class="log-segment-item">
+        <div class="log-seg-title"><strong>段 {{ idx + 1 }}</strong> <span class="log-seg-count">点数: {{ seg.points.length }}</span></div>
+        <div class="log-seg-row"><span class="log-label-bold">起点时间: </span><span>{{ formatTs(seg.points[0]?.ts) }}</span> ； <span class="log-label-bold">终点时间: </span><span>{{ formatTs(seg.points[seg.points.length-1]?.ts) }}</span></div>
+        <div class="log-seg-row"><span class="log-label-bold">起点: </span><span>{{ formatLatLng(seg.points[0]) }}</span> ； <span class="log-label-bold">终点: </span><span>{{ formatLatLng(seg.points[seg.points.length-1]) }}</span></div>
       </li>
     </ul>
   </div>
-
 </template>
 
 <script setup>
@@ -65,9 +69,121 @@ load()
 </script>
 
 <style scoped>
-.panel-view {
+.log-panel-view {
   max-width: 900px;
   margin: 0 auto;
+  color: #111;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(33,150,243,0.07), 0 1.5px 6px rgba(0,0,0,0.04);
+  padding: 24px 18px 18px 18px;
+  font-size: 15px;
+}
+.log-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.log-label {
+  font-weight: 500;
+  color: #1976d2;
+}
+.log-select {
+  margin-left: 8px;
+  padding: 7px 10px;
+  border: 1px solid #bcdffb;
+  border-radius: 7px;
+  font-size: 15px;
+  outline: none;
+  transition: border 0.2s;
+  background: #fff;
   color: #222;
+}
+.log-select:focus {
+  border-color: #2196f3;
+}
+.log-btn {
+  background: #2196f3;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(33,150,243,0.08);
+  transition: background 0.2s;
+}
+.log-btn:hover {
+  background: #1976d2;
+}
+.log-empty {
+  color: #888;
+  background: #f7fafd;
+  border-radius: 8px;
+  padding: 18px 0;
+  text-align: center;
+  font-size: 16px;
+}
+.log-segment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.log-segment-item {
+  margin-bottom: 18px;
+  padding: 16px 14px 12px 14px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1.5px 6px rgba(33,150,243,0.04);
+  color: #111;
+  border: 1px solid #e3eaf2;
+}
+.log-segment-item:last-child {
+  margin-bottom: 0;
+}
+.log-seg-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.log-seg-count {
+  font-size: 13px;
+  color: #2196f3;
+  background: #e3f2fd;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin-left: 2px;
+}
+.log-seg-row {
+  margin-bottom: 3px;
+  color: #111;
+}
+.log-label-bold {
+  font-weight: 600;
+  color: #111;
+}
+@media (max-width: 600px) {
+  .log-panel-view {
+    padding: 12px 2vw 10px 2vw;
+    font-size: 16px;
+  }
+  .log-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .log-segment-item {
+    padding: 12px 8px 10px 10px;
+    font-size: 15px;
+  }
+  .log-seg-title {
+    font-size: 15px;
+  }
 }
 </style>
