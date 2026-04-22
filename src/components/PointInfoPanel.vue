@@ -1,5 +1,5 @@
 <template>
-  <div ref="containerRef" v-show="visible" class="pip-container" role="region" aria-label="点信息面板">
+  <div v-show="visible" class="pip-container" role="region" aria-label="点信息面板">
     <div class="pip-header">
       <div class="pip-left" aria-hidden="true"></div>
         <div class="pip-center">
@@ -29,11 +29,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, defineExpose, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, defineExpose, computed } from 'vue'
 import panelIcons from '../lib/panelIcons.js'
 
 const visible = ref(false)
-const containerRef = ref(null)
 const options = reactive({ title: '', data: null, onPrev: null, onNext: null, onTogglePlay: null })
 const icons = reactive({ prev: panelIcons.prev, play: panelIcons.play, stop: panelIcons.stop, next: panelIcons.next })
 const isPlaying = ref(false)
@@ -101,27 +100,7 @@ function setIcons(ic = {}) {
 
 defineExpose({ open, close, prev: onPrev, next: onNext, togglePlay: onTogglePlay, setIcons })
 
-// Prevent double-tap to zoom inside this panel (only while interacting with the panel)
-let _lastTouch = 0
-function _touchEndPreventDoubleZoom(e) {
-  const now = Date.now()
-  if (now - _lastTouch <= 300) {
-    e.preventDefault()
-  }
-  _lastTouch = now
-}
 
-onMounted(() => {
-  if (containerRef.value && containerRef.value.addEventListener) {
-    containerRef.value.addEventListener('touchend', _touchEndPreventDoubleZoom, { passive: false })
-  }
-})
-
-onBeforeUnmount(() => {
-  if (containerRef.value && containerRef.value.removeEventListener) {
-    containerRef.value.removeEventListener('touchend', _touchEndPreventDoubleZoom, { passive: false })
-  }
-})
 
 function _normalizeTs(raw) {
   const n = Number(raw)
@@ -160,8 +139,6 @@ const displayFields = computed(() => {
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
-  touch-action: manipulation;
-  -ms-touch-action: manipulation;
 }
 .pip-header {
   display:flex;
@@ -175,7 +152,7 @@ const displayFields = computed(() => {
 .pip-center { display:flex; gap:12px; align-items:center; justify-content:center; flex:1 }
 .pip-close { background:transparent; border:none; font-size:22px; padding:6px 8px; cursor:pointer; color:#666; }
 .pip-btn { width:44px; height:44px; border-radius:50%; background:#fff; border:1px solid #eee; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow: 0 1px 6px rgba(0,0,0,0.06); }
-.pip-btn { touch-action: manipulation; }
+/* removed touch-action to avoid interfering with rapid clicks on mobile */
 .pip-btn img { width:75%; height:75%; object-fit:contain }
 .pip-ic { font-size:18px; color:#333 }
 .pip-close { background:transparent; border:none; font-size:22px; padding:6px 8px; cursor:pointer; color:#666; }
