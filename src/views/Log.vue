@@ -1,10 +1,10 @@
 <template>
   <div class="panel-view" style="padding:16px;">
-    <h1>Log 页面 — 骑行分段</h1>
+    
     <div style="margin-bottom:12px">
       <label>设备 ID：<input v-model="deviceId" style="margin-left:8px" /></label>
       <button @click="load" style="margin-left:12px">加载</button>
-      <router-link to="/" style="margin-left:12px">返回地图</router-link>
+      
     </div>
 
     <div v-if="segments.length === 0">无骑行分段或尚未加载。</div>
@@ -16,11 +16,13 @@
       </li>
     </ul>
   </div>
+
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { segmentTrack } from '../utils/segment.js'
+onMounted(() => { document.title = '骑行头盔用户站-Log' })
 
 const deviceId = ref('dev-001')
 const segments = ref([])

@@ -24,21 +24,15 @@ FloatTaskbar.vue
     <div class="panel" role="navigation" aria-label="浮动任务栏">
       <!-- 四个垂直排列的占位按钮（无业务逻辑，仅视觉占位） -->
       <div class="btn-list" aria-hidden="false">
-        <!-- 占位按钮 1: helmet (顶部) -->
-        <button class="task-btn" aria-label="helmet" type="button" @click="navigate('/helmet')">
-          <img :src="icons[0]" class="task-icon" alt="" />
-        </button>
-        <!-- 占位按钮 2: me -->
-        <button class="task-btn" aria-label="me" type="button" @click="navigate('/me')">
-          <img :src="icons[1]" class="task-icon" alt="" />
-        </button>
-        <!-- 占位按钮 3: config -->
-        <button class="task-btn" aria-label="config" type="button" @click="navigate('/config')">
-          <img :src="icons[2]" class="task-icon" alt="" />
-        </button>
-        <!-- 占位按钮 4: log (底部) -->
-        <button class="task-btn" aria-label="log" type="button" @click="navigate('/log')">
-          <img :src="icons[3]" class="task-icon" alt="" />
+        <button
+          v-for="btn in taskButtons"
+          :key="btn.key"
+          class="task-btn"
+          :aria-label="btn.label"
+          type="button"
+          @click="navigate(btn.path)"
+        >
+          <img :src="btn.icon" class="task-icon" :alt="btn.label" />
         </button>
       </div>
     </div>
@@ -50,32 +44,43 @@ import helmetIcon from '../assets/helmet.svg'
 import meIcon from '../assets/me.svg'
 import configIcon from '../assets/config.svg'
 import logIcon from '../assets/log.svg'
+import mapIcon from '../assets/map.svg'
 import { closePointPanel } from '../composables/usePointPanel.js'
 
 export default {
   name: 'FloatTaskbar',
   data() {
     return {
-      // collapsed: true 表示任务栏处于收起状态（仅显示展开按钮）
-      // collapsed: false 表示任务栏展开，显示 panel 与占位按钮
-      collapsed: true,
-      // icons: 从上到下依次为 helmet, me, config, log
-      icons: [helmetIcon, meIcon, configIcon, logIcon]
+      collapsed: true
+    }
+  },
+  computed: {
+    currentPath() {
+      return this.$route && this.$route.path ? this.$route.path : '/'
+    },
+    // 动态生成按钮列表，当前页按钮隐藏，顶部为 map
+    taskButtons() {
+      // 配置所有按钮
+      const all = [
+        { key: 'map', path: '/', icon: mapIcon, label: 'map' },
+        { key: 'helmet', path: '/helmet', icon: helmetIcon, label: 'helmet' },
+        { key: 'me', path: '/me', icon: meIcon, label: 'me' },
+        { key: 'config', path: '/config', icon: configIcon, label: 'config' },
+        { key: 'log', path: '/log', icon: logIcon, label: 'log' }
+      ]
+      // 当前页面对应按钮隐藏
+      return all.filter(btn => btn.path !== this.currentPath)
     }
   },
   methods: {
-    // 切换折叠状态：由顶部的展开/收起按钮触发
     toggle() {
       this.collapsed = !this.collapsed
-    }
-    ,
-    // 跳转到指定路由
+    },
     navigate(path) {
       if (this.$router && path) {
         try { closePointPanel() } catch (e) { /* ignore close failures */ }
         this.$router.push(path)
       }
-      // 点击后自动收起任务栏（可按需修改）
       this.collapsed = true
     }
   }
