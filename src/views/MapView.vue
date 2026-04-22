@@ -1,9 +1,7 @@
 <template>
   <div class="map-container">
     <div id="map" class="map"></div>
-    <div class="map-controls">
-      <button @click="loadTrack">加载轨迹</button>
-    </div>
+  
   </div>
 </template>
 
@@ -262,6 +260,13 @@ onMounted(async () => {
     geolocation = await initGeolocation()
     status.value = '地图已加载'
 
+    // 先进行定位，再初始化轨迹渲染器并加载轨迹（保证先定位）
+    try {
+      await locate()
+    } catch (e) {
+      console.warn('[MapView] locate failed', e)
+    }
+
     // 初始化轨迹渲染器并尝试加载轨迹数据（幂等替换）
     try {
       trackService = initTrackService(map)
@@ -270,38 +275,6 @@ onMounted(async () => {
       await loadTrack()
     } catch (e) {
       console.warn('[MapView] initTrackService failed', e)
-    }
-
-    // 权限优先检查：若浏览器支持 navigator.permissions，则优先查询 geolocation
-    try {
-      if (navigator.permissions && navigator.permissions.query) {
-        try {
-          const perm = await navigator.permissions.query({ name: 'geolocation' })
-          if (perm && perm.state === 'denied') {
-            const res = await showMessage({
-              title: '定位被拒绝',
-              message: '定位被拒绝，请在浏览器/系统设置允许定位',
-              type: 'warn',
-              showCancel: true,
-              confirmText: '重试',
-              cancelText: '关闭'
-            })
-            if (res && res.action === 'confirm') locate()
-          } else {
-            // prompt 或 granted
-            locate()
-          }
-        } catch (e) {
-          console.warn('permissions.query failed', e)
-          locate()
-        }
-      } else {
-        // 不支持 permissions API，直接尝试定位
-        locate()
-      }
-    } catch (e) {
-      console.warn('permissions check failed', e)
-      locate()
     }
 
     // Pinia 非侵入式验证（仅用于确认 store 可用，不改 UI）
