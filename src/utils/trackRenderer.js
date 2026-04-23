@@ -401,33 +401,108 @@ export function initTrackRenderer(map) {
             const segPts = marker.__segmentPoints
             const segEnd = Math.max(0, segPts.length - 1)
             const findIdx = segPts.findIndex(p => p && p.ts === point.ts && p.lng === point.lng && p.lat === point.lat)
-            const startIdx = 0
-            const startIndex = Math.max(0, Math.min(findIdx >= 0 ? findIdx : (marker.__segmentIndex || 0), segEnd))
+              const startIdx = 0
+              const startIndex = Math.max(0, Math.min(findIdx >= 0 ? findIdx : (marker.__segmentIndex || 0), segEnd))
 
-            const openForSegmentIndex = (i) => {
-              const idx = Math.max(0, Math.min(i, segEnd))
-              // try to select a corresponding marker for visual highlight if available
-              try {
-                if (segmentLayers && typeof segmentLayers === 'object') {
-                  // search for a marker in segmentLayers that matches this segment and index
-                  // (markers created in renderSegment have __segmentPoints and __segmentIndex attached)
-                  for (const sid of Object.keys(segmentLayers)) {
-                    const entry = segmentLayers[sid]
-                    if (!entry || !Array.isArray(entry.markers)) continue
-                    const m = entry.markers.find(mm => mm && mm.__segmentPoints === segPts && mm.__segmentIndex === idx)
-                    if (m) { try { _selectMarker(m) } catch (e) { /* ignore */ } break }
-                  }
+              // Segment-local autoplay state (kept in closure so multiple segments don't interfere)
+              let segPlayTimer = null
+              let segIsPlaying = false
+              let segPlayCurrentIndex = startIndex
+              let segPlaySpeed = Number(_playSpeed) || 1
+
+              function seg_clearTimer() {
+                try { if (segPlayTimer) { clearTimeout(segPlayTimer); segPlayTimer = null } } catch (e) { /* ignore */ }
+              }
+
+              function seg_stopPlay() {
+                try { seg_clearTimer() } catch (e) { /* ignore */ }
+                segIsPlaying = false
+                segPlayCurrentIndex = -1
+              }
+
+              function seg_scheduleNext() {
+                try {
+                  if (!segIsPlaying || !Array.isArray(segPts) || segPts.length === 0) { seg_stopPlay(); return }
+                  if (segPlayCurrentIndex >= segEnd) { seg_stopPlay(); return }
+                  const cur = segPts[segPlayCurrentIndex]
+                  const nxt = segPts[segPlayCurrentIndex + 1]
+                  if (!cur || !nxt) { seg_stopPlay(); return }
+                  const delta = Math.max(1, Number(nxt.ts) - Number(cur.ts))
+                  const delay = Math.max(0, Math.round(delta / (segPlaySpeed || 1)))
+                  seg_clearTimer()
+                  segPlayTimer = setTimeout(() => {
+                    segPlayTimer = null
+                    segPlayCurrentIndex = Math.min(segEnd, segPlayCurrentIndex + 1)
+                    try {
+                      // select marker visually if possible
+                      try {
+                        if (segmentLayers && typeof segmentLayers === 'object') {
+                          for (const sid of Object.keys(segmentLayers)) {
+                            const entry = segmentLayers[sid]
+                            if (!entry || !Array.isArray(entry.markers)) continue
+                            const m = entry.markers.find(mm => mm && mm.__segmentPoints === segPts && mm.__segmentIndex === segPlayCurrentIndex)
+                            if (m) { try { _selectMarker(m) } catch (e) { /* ignore */ } break }
+                          }
+                        }
+                      } catch (e) { /* ignore */ }
+
+                      const onPrev = segPlayCurrentIndex > startIdx ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex - 1, true) } : null
+                      const onNext = segPlayCurrentIndex < segEnd ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex + 1, true) } : null
+                      const p = showPointPanel({ title: '轨迹点信息', data: segPts[segPlayCurrentIndex], isPlaying: true, onPrev, onNext, onTogglePlay: (playing) => { if (!playing) try { seg_stopPlay() } catch (e) {} } })
+                      if (p && typeof p.finally === 'function') p.finally(() => { try { seg_stopPlay(); _clearSelection() } catch (e) {} })
+                    } catch (e) { /* ignore */ }
+                    // schedule next step
+                    seg_scheduleNext()
+                  }, delay)
+                } catch (e) {
+                  console.warn('[trackRenderer] segment autoplay schedule error', e)
+                  seg_stopPlay()
                 }
-              } catch (e) { /* ignore selection errors */ }
+              }
 
-              const onPrev = idx > startIdx ? () => { try { _stopAutoPlay() } catch (e) {} ; openForSegmentIndex(idx - 1) } : null
-              const onNext = idx < segEnd ? () => { try { _stopAutoPlay() } catch (e) {} ; openForSegmentIndex(idx + 1) } : null
-              const p = showPointPanel({ title: '轨迹点信息', data: segPts[idx], isPlaying: false, onPrev, onNext, onTogglePlay: (playing) => { /* noop for local segment */ } })
-              if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
-            }
+              function seg_startPlayFrom(index, speed) {
+                try {
+                  // stop any global autoplay first
+                  try { _stopAutoPlay() } catch (e) { /* ignore */ }
+                  seg_stopPlay()
+                  if (!Array.isArray(segPts) || segPts.length === 0) return
+                  segPlaySpeed = Number(speed) || Number(_playSpeed) || 1
+                  segPlayCurrentIndex = Math.max(0, Math.min(index, segEnd))
+                  segIsPlaying = true
+                  // open panel for current index in playing state
+                  const onPrev = segPlayCurrentIndex > startIdx ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex - 1, true) } : null
+                  const onNext = segPlayCurrentIndex < segEnd ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex + 1, true) } : null
+                  const p = showPointPanel({ title: '轨迹点信息', data: segPts[segPlayCurrentIndex], isPlaying: true, onPrev, onNext, onTogglePlay: (playing) => { if (!playing) try { seg_stopPlay() } catch (e) {} } })
+                  if (p && typeof p.finally === 'function') p.finally(() => { try { seg_stopPlay(); _clearSelection() } catch (e) {} })
+                  seg_scheduleNext()
+                } catch (e) {
+                  console.warn('[trackRenderer] startSegmentAutoPlay failed', e)
+                  seg_stopPlay()
+                }
+              }
 
-            openForSegmentIndex(startIndex)
-            return
+              const openForSegmentIndex = (i, isPlaying = false) => {
+                const idx = Math.max(0, Math.min(i, segEnd))
+                // try to select a corresponding marker for visual highlight if available
+                try {
+                  if (segmentLayers && typeof segmentLayers === 'object') {
+                    for (const sid of Object.keys(segmentLayers)) {
+                      const entry = segmentLayers[sid]
+                      if (!entry || !Array.isArray(entry.markers)) continue
+                      const m = entry.markers.find(mm => mm && mm.__segmentPoints === segPts && mm.__segmentIndex === idx)
+                      if (m) { try { _selectMarker(m) } catch (e) { /* ignore */ } break }
+                    }
+                  }
+                } catch (e) { /* ignore selection errors */ }
+
+                const onPrev = idx > startIdx ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(idx - 1) } : null
+                const onNext = idx < segEnd ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(idx + 1) } : null
+                const p = showPointPanel({ title: '轨迹点信息', data: segPts[idx], isPlaying: !!isPlaying, onPrev, onNext, onTogglePlay: (playing) => { if (playing) seg_startPlayFrom(idx); else seg_stopPlay() } })
+                if (p && typeof p.finally === 'function') p.finally(() => { try { seg_stopPlay(); _clearSelection() } catch (e) {} })
+              }
+
+              openForSegmentIndex(startIndex)
+              return
           }
 
           // Fallback: default global behavior (use lastPoints / openForIndexGlobal)
