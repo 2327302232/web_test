@@ -101,9 +101,11 @@ export function initTrackRenderer(map) {
       try {
         if (clean.length > 0) {
           startM = _createCircleMarkerAtPoint(clean[0], { size: 14, color: '#2ecc71', border: '#fff', borderWidth: 2 });
+          try { if (startM) { startM.__segmentPoints = clean; startM.__segmentIndex = 0 } } catch (e) { /* ignore */ }
         }
         if (clean.length > 1) {
           endM = _createCircleMarkerAtPoint(clean[clean.length - 1], { size: 14, color: '#e74c3c', border: '#fff', borderWidth: 2 });
+          try { if (endM) { endM.__segmentPoints = clean; endM.__segmentIndex = clean.length - 1 } } catch (e) { /* ignore */ }
         }
       } catch (e) { /* ignore */ }
 
@@ -113,6 +115,7 @@ export function initTrackRenderer(map) {
         for (let i = 1; i < clean.length - 1; i++) {
           try {
             const m = _createCircleMarkerAtPoint(clean[i], { size: 10, color: '#ff8800', border: '#fff', borderWidth: 1 });
+            try { if (m) { m.__segmentPoints = clean; m.__segmentIndex = i } } catch (e) { /* ignore */ }
             if (m) midMarkers.push(m);
           } catch (e) { /* ignore */ }
         }
@@ -392,24 +395,59 @@ export function initTrackRenderer(map) {
           // mark this marker as selected (visual)
           try { _selectMarker(marker) } catch (e) { /* ignore */ }
 
-          const findIndex = () => {
+          // If this marker belongs to a standalone rendered segment (has its own segment points),
+          // open a segment-local panel with prev/next that navigate within that segment.
+          if (marker && Array.isArray(marker.__segmentPoints)) {
+            const segPts = marker.__segmentPoints
+            const segEnd = Math.max(0, segPts.length - 1)
+            const findIdx = segPts.findIndex(p => p && p.ts === point.ts && p.lng === point.lng && p.lat === point.lat)
+            const startIdx = 0
+            const startIndex = Math.max(0, Math.min(findIdx >= 0 ? findIdx : (marker.__segmentIndex || 0), segEnd))
+
+            const openForSegmentIndex = (i) => {
+              const idx = Math.max(0, Math.min(i, segEnd))
+              // try to select a corresponding marker for visual highlight if available
+              try {
+                if (segmentLayers && typeof segmentLayers === 'object') {
+                  // search for a marker in segmentLayers that matches this segment and index
+                  // (markers created in renderSegment have __segmentPoints and __segmentIndex attached)
+                  for (const sid of Object.keys(segmentLayers)) {
+                    const entry = segmentLayers[sid]
+                    if (!entry || !Array.isArray(entry.markers)) continue
+                    const m = entry.markers.find(mm => mm && mm.__segmentPoints === segPts && mm.__segmentIndex === idx)
+                    if (m) { try { _selectMarker(m) } catch (e) { /* ignore */ } break }
+                  }
+                }
+              } catch (e) { /* ignore selection errors */ }
+
+              const onPrev = idx > startIdx ? () => { try { _stopAutoPlay() } catch (e) {} ; openForSegmentIndex(idx - 1) } : null
+              const onNext = idx < segEnd ? () => { try { _stopAutoPlay() } catch (e) {} ; openForSegmentIndex(idx + 1) } : null
+              const p = showPointPanel({ title: '轨迹点信息', data: segPts[idx], isPlaying: false, onPrev, onNext, onTogglePlay: (playing) => { /* noop for local segment */ } })
+              if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
+            }
+
+            openForSegmentIndex(startIndex)
+            return
+          }
+
+          // Fallback: default global behavior (use lastPoints / openForIndexGlobal)
+          const findIndexGlobal = () => {
             if (!Array.isArray(lastPoints)) return -1
             return lastPoints.findIndex(p => p && p.ts === point.ts && p.lng === point.lng && p.lat === point.lat)
           }
 
           const openForIndex = (i) => {
             if (!Array.isArray(lastPoints) || lastPoints.length === 0) {
-              // still select the clicked marker
+              // still select the clicked marker and show panel without nav
               try { _selectMarker(marker) } catch (e) { /* ignore */ }
               const p = showPointPanel({ title, data: point })
               if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
               return
             }
-            // delegate to global implementation that also supports autoplay
             try { openForIndexGlobal(i) } catch (e) { console.warn('[trackRenderer] openForIndex delegate failed', e) }
           }
 
-          const idx = findIndex()
+          const idx = findIndexGlobal()
           openForIndex(idx >= 0 ? idx : 0)
         } catch (e) {
           console.warn('[trackRenderer] showPointPanel failed', e)
