@@ -59,10 +59,205 @@ export function initTrackRenderer(map) {
   let lastPoints = []
   let lastSegments = []
   let selectedMarker = null
+  // playback manager (autoplay within current segment)
+  let _playTimer = null
+  let _isPlaying = false
+  let _playSpeed = 5 // default 5x
+  let _playCurrentIndex = -1
+  let _playSegment = null
+  // segmentId -> { polylines: [], markers: [] }
+  const segmentLayers = {}
+  /**
+   * 渲染单个分段
+   * @param {string} segmentId
+   * @param {Array} points
+   * @param {object} options
+   * @returns {Promise<{segmentId, rendered, info}>}
+   */
+  function renderSegment(segmentId, points, options = {}) {
+    return new Promise((resolve) => {
+      if (!segmentId || !Array.isArray(points) || points.length === 0) {
+        resolve({ segmentId, rendered: false, info: 'no-points' });
+        return;
+      }
+      // 幂等：先清理
+      clearSegment(segmentId);
+      const { points: clean } = _preprocess(points);
+      if (clean.length === 0) {
+        resolve({ segmentId, rendered: false, info: 'no-valid-points' });
+        return;
+      }
+      // polyline
+      const polylineOpts = Object.assign({ strokeColor: '#8400ff', strokeWeight: 3, strokeOpacity: 1 }, options.polyline || {});
+      const segPath = clean.map(p => [Number(p.lng), Number(p.lat)]);
+      let pl = null;
+      try {
+        pl = addPolyline(map, segPath, polylineOpts);
+      } catch (e) {
+        console.warn('[trackRenderer] addPolyline failed', e);
+      }
+      // start/end markers
+      let startM = null, endM = null;
+      try {
+        if (clean.length > 0) {
+          startM = _createCircleMarkerAtPoint(clean[0], { size: 14, color: '#2ecc71', border: '#fff', borderWidth: 2 });
+        }
+        if (clean.length > 1) {
+          endM = _createCircleMarkerAtPoint(clean[clean.length - 1], { size: 14, color: '#e74c3c', border: '#fff', borderWidth: 2 });
+        }
+      } catch (e) { /* ignore */ }
+
+      // 中间点小marker
+      const midMarkers = [];
+      if (clean.length > 2) {
+        for (let i = 1; i < clean.length - 1; i++) {
+          try {
+            const m = _createCircleMarkerAtPoint(clean[i], { size: 10, color: '#ff8800', border: '#fff', borderWidth: 1 });
+            if (m) midMarkers.push(m);
+          } catch (e) { /* ignore */ }
+        }
+      }
+
+      segmentLayers[segmentId] = {
+        polylines: pl ? [pl] : [],
+        markers: [startM, endM, ...midMarkers].filter(Boolean),
+      };
+      resolve({ segmentId, rendered: true, info: { points: clean.length } });
+    });
+  }
+
+  /**
+   * 清理单个分段
+   * @param {string} segmentId
+   */
+  function clearSegment(segmentId) {
+    const entry = segmentLayers[segmentId];
+    if (!entry) return;
+    if (Array.isArray(entry.polylines)) {
+      for (const pl of entry.polylines) {
+        try { if (pl && typeof pl.setMap === 'function') pl.setMap(null); } catch (e) { }
+      }
+    }
+    if (Array.isArray(entry.markers)) {
+      for (const m of entry.markers) {
+        try { if (m && typeof m.setMap === 'function') m.setMap(null); } catch (e) { }
+      }
+    }
+    delete segmentLayers[segmentId];
+  }
+
+  /**
+   * 清理所有分段
+   */
+  function clearAll() {
+    for (const id of Object.keys(segmentLayers)) {
+      clearSegment(id);
+    }
+  }
 
   // panel close handler (will be registered on window)
   function _handlePanelCloseEvent(e) {
     try { _clearSelection() } catch (err) { /* ignore */ }
+    try { _stopAutoPlay() } catch (err) { /* ignore */ }
+  }
+
+  function _clearAutoPlayTimer() {
+    try { if (_playTimer) { clearTimeout(_playTimer); _playTimer = null } } catch (e) { /* ignore */ }
+  }
+
+  function _stopAutoPlay() {
+    _clearAutoPlayTimer()
+    _isPlaying = false
+    _playCurrentIndex = -1
+    _playSegment = null
+  }
+
+  function _scheduleNextInSegment() {
+    try {
+      if (!_isPlaying || !Array.isArray(lastPoints) || lastPoints.length === 0) { _stopAutoPlay(); return }
+      if (!_playSegment) {
+        _playSegment = Array.isArray(lastSegments) ? lastSegments.find(s => _playCurrentIndex >= s.startIndex && _playCurrentIndex <= s.endIndex) : null
+      }
+      if (!_playSegment) { _stopAutoPlay(); return }
+      if (_playCurrentIndex >= _playSegment.endIndex) { _stopAutoPlay(); return }
+      const cur = lastPoints[_playCurrentIndex]
+      const nxt = lastPoints[_playCurrentIndex + 1]
+      if (!cur || !nxt) { _stopAutoPlay(); return }
+      const delta = Math.max(1, Number(nxt.ts) - Number(cur.ts))
+      const delay = Math.max(0, Math.round(delta / (_playSpeed || 1)))
+      _clearAutoPlayTimer()
+      _playTimer = setTimeout(() => {
+        _playTimer = null
+        // advance index and open panel for next
+        _playCurrentIndex = Math.min(_playSegment.endIndex, _playCurrentIndex + 1)
+        try { openForIndex(_playCurrentIndex) } catch (e) { /* ignore */ }
+        // schedule further unless stopped
+        _scheduleNextInSegment()
+      }, delay)
+    } catch (e) {
+      console.warn('[trackRenderer] autoplay schedule error', e)
+      _stopAutoPlay()
+    }
+  }
+
+  function _startAutoPlayFrom(index) {
+    try {
+      _stopAutoPlay()
+      if (!Array.isArray(lastPoints) || lastPoints.length === 0) return
+      const i = Math.max(0, Math.min(index, lastPoints.length - 1))
+      _playCurrentIndex = i
+      _isPlaying = true
+      _playSegment = Array.isArray(lastSegments) ? lastSegments.find(s => i >= s.startIndex && i <= s.endIndex) : null
+      if (!_playSegment) { _stopAutoPlay(); return }
+      // ensure panel shows current index
+      try { openForIndex(_playCurrentIndex) } catch (e) { /* ignore */ }
+      // schedule subsequent steps
+      _scheduleNextInSegment()
+    } catch (e) {
+      console.warn('[trackRenderer] startAutoPlay failed', e)
+      _stopAutoPlay()
+    }
+  }
+
+  // open panel for a given index (global helper so autoplay can reuse it)
+  function openForIndexGlobal(i) {
+    try {
+      if (!Array.isArray(lastPoints) || lastPoints.length === 0) {
+        return
+      }
+      const idx = Math.max(0, Math.min(i, lastPoints.length - 1))
+      try { const m = _getMarkerForIndex(idx); if (m) _selectMarker(m) } catch (e) { /* ignore */ }
+
+      let onPrevFn = null
+      let onNextFn = null
+      try {
+        if (Array.isArray(lastSegments) && lastSegments.length) {
+          const seg = lastSegments.find(s => idx >= s.startIndex && idx <= s.endIndex)
+          if (seg) {
+            if (idx > seg.startIndex) onPrevFn = () => { _stopAutoPlay(); openForIndexGlobal(idx - 1) }
+            if (idx < seg.endIndex) onNextFn = () => { _stopAutoPlay(); openForIndexGlobal(idx + 1) }
+          } else {
+            onPrevFn = () => { _stopAutoPlay(); openForIndexGlobal(idx - 1) }
+            onNextFn = () => { _stopAutoPlay(); openForIndexGlobal(idx + 1) }
+          }
+        } else {
+          onPrevFn = () => { _stopAutoPlay(); openForIndexGlobal(idx - 1) }
+          onNextFn = () => { _stopAutoPlay(); openForIndexGlobal(idx + 1) }
+        }
+      } catch (e) { onPrevFn = () => { _stopAutoPlay(); openForIndexGlobal(idx - 1) }; onNextFn = () => { _stopAutoPlay(); openForIndexGlobal(idx + 1) } }
+
+      const p = showPointPanel({
+        title: '轨迹点信息',
+        data: lastPoints[idx],
+        isPlaying: !!_isPlaying,
+        onPrev: onPrevFn,
+        onNext: onNextFn,
+        onTogglePlay: (playing) => { if (playing) _startAutoPlayFrom(idx); else _stopAutoPlay() }
+      })
+      if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
+    } catch (e) {
+      console.warn('[trackRenderer] openForIndexGlobal failed', e)
+    }
   }
 
   function _makeCircleHtml(style = {}) {
@@ -210,38 +405,8 @@ export function initTrackRenderer(map) {
               if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
               return
             }
-            const idx = Math.max(0, Math.min(i, lastPoints.length - 1))
-            // select marker for this index (start / middle / end)
-            try { const m = _getMarkerForIndex(idx); if (m) _selectMarker(m) } catch (e) { /* ignore */ }
-
-            // determine segment boundaries (if available) and restrict prev/next to same segment
-            let onPrevFn = null
-            let onNextFn = null
-            try {
-              if (Array.isArray(lastSegments) && lastSegments.length) {
-                const seg = lastSegments.find(s => idx >= s.startIndex && idx <= s.endIndex)
-                if (seg) {
-                  if (idx > seg.startIndex) onPrevFn = () => openForIndex(idx - 1)
-                  if (idx < seg.endIndex) onNextFn = () => openForIndex(idx + 1)
-                } else {
-                  onPrevFn = () => openForIndex(idx - 1)
-                  onNextFn = () => openForIndex(idx + 1)
-                }
-              } else {
-                onPrevFn = () => openForIndex(idx - 1)
-                onNextFn = () => openForIndex(idx + 1)
-              }
-            } catch (e) { onPrevFn = () => openForIndex(idx - 1); onNextFn = () => openForIndex(idx + 1) }
-
-            const p = showPointPanel({
-              title,
-              data: lastPoints[idx],
-              isPlaying: false,
-              onPrev: onPrevFn,
-              onNext: onNextFn,
-              onTogglePlay: (playing) => { /* placeholder for playback control */ }
-            })
-            if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
+            // delegate to global implementation that also supports autoplay
+            try { openForIndexGlobal(i) } catch (e) { console.warn('[trackRenderer] openForIndex delegate failed', e) }
           }
 
           const idx = findIndex()
@@ -405,8 +570,11 @@ export function initTrackRenderer(map) {
     renderTrack,
     clearTrack,
     appendPoints,
+    renderSegment,
+    clearSegment,
+    clearAll,
     // expose lastPoints for debugging/tests
-    _internal: { getLastPoints: () => lastPoints, getLastSegments: () => lastSegments }
+    _internal: { getLastPoints: () => lastPoints, getLastSegments: () => lastSegments, segmentLayers }
   }
 }
 

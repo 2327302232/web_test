@@ -1,4 +1,5 @@
 
+
 <template>
   <div class="log-panel-view">
     <div class="log-header">
@@ -10,11 +11,22 @@
         </select>
       </label>
       <button @click="load" class="log-btn">加载</button>
+      <span v-if="segments.length" style="margin-left:16px;">
+        <strong>已选: {{ selectionStore.count }}</strong>
+        <button class="log-btn" style="margin-left:8px;" @click="selectAll">全选</button>
+        <button class="log-btn" style="margin-left:4px;background:#eee;color:#333;" @click="clearSelection">清除</button>
+      </span>
     </div>
 
     <div v-if="segments.length === 0" class="log-empty">无骑行分段或尚未加载。</div>
     <ul v-else class="log-segment-list">
-      <li v-for="(seg, idx) in segments" :key="idx" class="log-segment-item">
+      <li v-for="(seg, idx) in segments" :key="segmentId(seg, idx)" class="log-segment-item">
+        <input type="checkbox"
+          :value="segmentId(seg, idx)"
+          :checked="selectionStore.isSelected(segmentId(seg, idx))"
+          @change="() => selectionStore.toggle(segmentId(seg, idx))"
+          style="margin-right:10px;transform:scale(1.2);vertical-align:middle;"
+        />
         <div class="log-seg-title">
           <strong>{{ formatDate(seg.points[0]?.ts) }}</strong>
           <span class="log-seg-device">设备: {{ deviceId }}</span>
@@ -35,10 +47,19 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { segmentTrack } from '../utils/segment.js'
+import { useTrackSelection } from '../stores/trackSelection.js'
 onMounted(() => { document.title = '骑行头盔用户站-Log' })
 
 const deviceId = ref('dev-001')
 const segments = ref([])
+const selectionStore = useTrackSelection()
+
+function segmentId(seg, idx) {
+  // `${deviceId}:${startTs}:${endTs}`
+  const start = seg.points[0]?.ts
+  const end = seg.points[seg.points.length - 1]?.ts
+  return `${deviceId.value}:${start}:${end}`
+}
 
 async function load() {
   try {
@@ -52,12 +73,34 @@ async function load() {
     const pts = Array.isArray(data.points) ? data.points : []
     const res = segmentTrack(pts)
     segments.value = res.segments || []
+    // 注册 meta
+    segments.value.forEach((seg, idx) => {
+      const id = segmentId(seg, idx)
+      const meta = {
+        deviceId: deviceId.value,
+        startTs: seg.points[0]?.ts,
+        endTs: seg.points[seg.points.length - 1]?.ts,
+        pointCount: seg.points.length,
+        startLng: seg.points[0]?.lng,
+        startLat: seg.points[0]?.lat,
+        endLng: seg.points[seg.points.length - 1]?.lng,
+        endLat: seg.points[seg.points.length - 1]?.lat,
+      }
+      selectionStore.registerMeta(id, meta)
+    })
   } catch (e) {
     console.error('load segments failed', e)
     segments.value = []
   }
 }
 
+function selectAll() {
+  const allIds = segments.value.map((seg, idx) => segmentId(seg, idx))
+  selectionStore.bulkSelect(allIds)
+}
+function clearSelection() {
+  selectionStore.clear()
+}
 
 function formatTs(ts) {
   if (!ts) return '—'
@@ -66,7 +109,6 @@ function formatTs(ts) {
   const ms = n < 1e12 ? Math.round(n * 1000) : Math.round(n)
   return new Date(ms).toLocaleString()
 }
-
 function formatDate(ts) {
   if (!ts) return '—'
   const n = Number(ts)
@@ -75,7 +117,6 @@ function formatDate(ts) {
   const d = new Date(ms)
   return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日'
 }
-
 function formatTime(ts) {
   if (!ts) return '—'
   const n = Number(ts)
@@ -84,7 +125,6 @@ function formatTime(ts) {
   const d = new Date(ms)
   return d.toTimeString().slice(0, 8)
 }
-
 function formatLatLng(p) {
   if (!p) return '—'
   const lng = Number(p.lng); const lat = Number(p.lat)
@@ -195,7 +235,6 @@ load()
   border-radius: 6px;
   padding: 2px 8px;
   margin-left: 2px;
-  border: 1px solid #ffb74d;
 }
 .log-seg-row {
   margin-bottom: 3px;

@@ -6,12 +6,48 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { loadAmapSdk, initMap, createMarker, initGeolocation } from '../utils/amap.js'
 import initTrackService from '../utils/trackService.js'
 import { splitByGap } from '../utils/segment.js'
 import { useAppStore } from '../stores'
 import { showMessage } from '../composables/useMessage'
+import { useTrackSelection } from '../stores/trackSelection.js'
+// Pinia 轨迹分段选择 store
+const selectionStore = useTrackSelection()
+// segmentId -> points 缓存，避免重复请求
+const segmentPointsCache = {}
+// 拉取并渲染单个分段
+async function _renderSegmentById(segmentId) {
+  const meta = selectionStore.meta[segmentId]
+  if (!meta) {
+    console.warn('[MapView] meta not found for', segmentId)
+    return
+  }
+  // 已有缓存直接渲染
+  if (segmentPointsCache[segmentId]) {
+    await trackService.renderer.renderSegment(segmentId, segmentPointsCache[segmentId])
+    return
+  }
+  // 拉取后端
+  try {
+    const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
+    const params = new URLSearchParams()
+    params.set('deviceId', meta.deviceId)
+    params.set('from', meta.startTs)
+    params.set('to', meta.endTs)
+    const url = `${backendBase.replace(/\/$/, '')}/api/track?${params.toString()}`
+    const resp = await fetch(url)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    const pts = Array.isArray(data.points) ? data.points : []
+    segmentPointsCache[segmentId] = pts
+    await trackService.renderer.renderSegment(segmentId, pts)
+    console.debug('[MapView] renderSegment', segmentId, 'points:', pts.length)
+  } catch (e) {
+    console.warn('[MapView] fetch segment failed', segmentId, e)
+  }
+}
 
 const status = ref('加载中…')
 const posText = ref('-')
@@ -267,14 +303,39 @@ onMounted(async () => {
       console.warn('[MapView] locate failed', e)
     }
 
-    // 初始化轨迹渲染器并尝试加载轨迹数据（幂等替换）
+    // 初始化轨迹渲染器
     try {
       trackService = initTrackService(map)
       trackReady.value = true
-      // 自动触发一次加载
-      await loadTrack()
     } catch (e) {
       console.warn('[MapView] initTrackService failed', e)
+    }
+
+    // 订阅 selected 变化，增量渲染/清理分段
+    let prevSelected = new Set(selectionStore.selected)
+    watch(() => selectionStore.selected.slice(), async (newVal, oldVal) => {
+      const newSet = new Set(newVal)
+      const oldSet = new Set(oldVal)
+      // 新增
+      for (const id of newSet) {
+        if (!oldSet.has(id)) {
+          await _renderSegmentById(id)
+        }
+      }
+      // 移除
+      for (const id of oldSet) {
+        if (!newSet.has(id)) {
+          if (trackService && trackService.renderer && typeof trackService.renderer.clearSegment === 'function') {
+            trackService.renderer.clearSegment(id)
+            console.debug('[MapView] clearSegment', id)
+          }
+        }
+      }
+    }, { immediate: true })
+
+    // 首次渲染所有已选分段
+    for (const id of selectionStore.selected) {
+      await _renderSegmentById(id)
     }
 
     // Pinia 非侵入式验证（仅用于确认 store 可用，不改 UI）
