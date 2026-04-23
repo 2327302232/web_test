@@ -15,9 +15,18 @@
     <div v-if="segments.length === 0" class="log-empty">无骑行分段或尚未加载。</div>
     <ul v-else class="log-segment-list">
       <li v-for="(seg, idx) in segments" :key="idx" class="log-segment-item">
-        <div class="log-seg-title"><strong>段 {{ idx + 1 }}</strong> <span class="log-seg-count">点数: {{ seg.points.length }}</span></div>
-        <div class="log-seg-row"><span class="log-label-bold">起点时间: </span><span>{{ formatTs(seg.points[0]?.ts) }}</span> ； <span class="log-label-bold">终点时间: </span><span>{{ formatTs(seg.points[seg.points.length-1]?.ts) }}</span></div>
-        <div class="log-seg-row"><span class="log-label-bold">起点: </span><span>{{ formatLatLng(seg.points[0]) }}</span> ； <span class="log-label-bold">终点: </span><span>{{ formatLatLng(seg.points[seg.points.length-1]) }}</span></div>
+        <div class="log-seg-title">
+          <strong>{{ formatDate(seg.points[0]?.ts) }}</strong>
+          <span class="log-seg-device">设备: {{ deviceId }}</span>
+          <span class="log-seg-count">点数: {{ seg.points.length }}</span>
+        </div>
+        <div class="log-seg-row">
+          <span class="log-label-bold">起点时间: </span><span>{{ formatTime(seg.points[0]?.ts) }}</span>
+          ；
+          <span class="log-label-bold">终点时间: </span><span>{{ formatTime(seg.points[seg.points.length-1]?.ts) }}</span>
+        </div>
+        <div class="log-seg-row"><span class="log-label-bold">起点: </span><span>{{ formatLatLng(seg.points[0]) }}</span></div>
+        <div class="log-seg-row"><span class="log-label-bold">终点: </span><span>{{ formatLatLng(seg.points[seg.points.length-1]) }}</span></div>
       </li>
     </ul>
   </div>
@@ -49,12 +58,31 @@ async function load() {
   }
 }
 
+
 function formatTs(ts) {
   if (!ts) return '—'
   const n = Number(ts)
   if (!Number.isFinite(n)) return String(ts)
   const ms = n < 1e12 ? Math.round(n * 1000) : Math.round(n)
   return new Date(ms).toLocaleString()
+}
+
+function formatDate(ts) {
+  if (!ts) return '—'
+  const n = Number(ts)
+  if (!Number.isFinite(n)) return String(ts)
+  const ms = n < 1e12 ? Math.round(n * 1000) : Math.round(n)
+  const d = new Date(ms)
+  return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日'
+}
+
+function formatTime(ts) {
+  if (!ts) return '—'
+  const n = Number(ts)
+  if (!Number.isFinite(n)) return String(ts)
+  const ms = n < 1e12 ? Math.round(n * 1000) : Math.round(n)
+  const d = new Date(ms)
+  return d.toTimeString().slice(0, 8)
 }
 
 function formatLatLng(p) {
@@ -159,6 +187,15 @@ load()
   border-radius: 6px;
   padding: 2px 8px;
   margin-left: 2px;
+}
+.log-seg-device {
+  font-size: 13px;
+  color: #ff9800;
+  background: #fff3e0;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin-left: 2px;
+  border: 1px solid #ffb74d;
 }
 .log-seg-row {
   margin-bottom: 3px;
