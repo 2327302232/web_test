@@ -17,6 +17,11 @@
     <div v-if="segments.length === 0" class="log-empty">无骑行分段或尚未加载。</div>
     <ul v-else class="log-segment-list">
       <li v-for="(seg, idx) in segments" :key="segmentId(seg, idx)" class="log-segment-item">
+        <div class="log-seg-title">
+          <strong>{{ formatDate(seg.points[0]?.ts) }}</strong>
+          <span class="log-seg-device">设备: {{ seg.deviceId || deviceId }}</span>
+          <span class="log-seg-count">点数: {{ seg.points.length }}</span>
+        </div>
         <div class="log-seg-checkbox">
           <input type="checkbox"
             :value="segmentId(seg, idx)"
@@ -25,11 +30,6 @@
           />
         </div>
         <div class="log-seg-content">
-          <div class="log-seg-title">
-            <strong>{{ formatDate(seg.points[0]?.ts) }}</strong>
-            <span class="log-seg-device">设备: {{ seg.deviceId || deviceId }}</span>
-            <span class="log-seg-count">点数: {{ seg.points.length }}</span>
-          </div>
           <div class="log-seg-row">
             <span class="log-label-bold">起点时间: </span><span>{{ formatTime(seg.points[0]?.ts) }}</span>
             ；
@@ -244,6 +244,7 @@ watch([() => selectionStore.selected.slice(), () => segments.value.length], asyn
 <style scoped>
 .log-panel-view {
   --left-col: 34px;
+  --checkbox-accent: #2196f3;
   max-width: 900px;
   margin: 0 auto;
   color: #111;
@@ -317,16 +318,16 @@ watch([() => selectionStore.selected.slice(), () => segments.value.length], asyn
 }
 .log-seg-checkbox {
   position: absolute;
-  left: 14px; /* align with item padding-left */
+  left: 30px; /* align with item padding-left */
   top: 50%;
   transform: translateY(-50%);
-  width: var(--left-col);
+  width: 0px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
 }
-.log-seg-checkbox input { transform: scale(1.12); }
+.log-seg-checkbox input { transform: scale(1.12); accent-color: var(--checkbox-accent); }
 .log-seg-content { margin-left: calc(var(--left-col) + 0px); }
 .log-segment-item:last-child {
   margin-bottom: 0;
@@ -337,8 +338,9 @@ watch([() => selectionStore.selected.slice(), () => segments.value.length], asyn
   color: #222;
   margin-bottom: 6px;
   display: flex;
-  align-items: center;
   gap: 12px;
+  margin-left: 5px;
+  justify-content: flex-start;
 }
 .log-seg-count {
   font-size: 13px;
@@ -380,8 +382,8 @@ watch([() => selectionStore.selected.slice(), () => segments.value.length], asyn
   box-shadow: 0 -6px 18px rgba(33,150,243,0.03);
   z-index: 999;
 }
-.log-footer-left { display:flex; align-items:center; width: var(--left-col); justify-content:center }
-.log-footer-checkbox { margin-right: 10px; transform: scale(1.18); vertical-align: middle; accent-color: #2196f3; }
+.log-footer-left { display:flex; align-items:center; margin-left: 7px; width: var(--left-col); justify-content:center }
+.log-footer-checkbox { margin-right: 10px; transform: scale(1.18); vertical-align: middle; accent-color: var(--checkbox-accent); }
 .log-footer-center { color: #666; font-size: 14px; }
 .log-footer-right { }
 .log-footer .log-btn { padding: 8px 16px; }

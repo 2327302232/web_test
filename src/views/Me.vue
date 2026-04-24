@@ -1,40 +1,75 @@
 <template>
   <div class="panel-view" style="padding:16px;">
+    <MessageModal ref="msgModal" />
 
     <div class="me-header">
       <h2>个人中心</h2>
     </div>
 
     <div v-if="!user">
-      <div class="auth-tabs">
-        <button :class="{active: mode==='login'}" @click="mode='login'">登录</button>
-        <button :class="{active: mode==='register'}" @click="mode='register'">注册</button>
-      </div>
-
-      <div v-if="mode==='login'" class="auth-form">
-        <label class="field">用户名： <input v-model="loginForm.username" placeholder="用户名" /></label>
-        <label class="field">密码： <input v-model="loginForm.password" type="password" placeholder="密码" /></label>
-        <div class="actions">
-          <button class="log-btn" @click="login" :disabled="isLoading">登录</button>
+      <div class="card auth-card">
+        <div class="auth-tabs">
+          <button :class="{active: mode==='login'}" @click="mode='login'">登录</button>
+          <button :class="{active: mode==='register'}" @click="mode='register'">注册</button>
         </div>
-        <div v-if="authError" class="error">{{ authError }}</div>
-      </div>
 
-      <div v-else class="auth-form">
-        <label class="field">用户名： <input v-model="regForm.username" placeholder="用户名" /></label>
-        <label class="field">密码： <input v-model="regForm.password" type="password" placeholder="密码" /></label>
-        <label class="field">显示名： <input v-model="regForm.displayName" placeholder="显示名 (可选)" /></label>
-        <div class="actions">
-          <button class="log-btn" @click="register" :disabled="isLoading">注册</button>
+        <div v-if="mode==='login'" class="auth-form">
+          <label class="field">用户名： <input v-model="loginForm.username" placeholder="用户名" /></label>
+          <label class="field">密码： <input v-model="loginForm.password" type="password" placeholder="密码" /></label>
+          <div class="actions">
+            <button class="log-btn" @click="login" :disabled="isLoading">登录</button>
+          </div>
+          <div v-if="authError" class="error">{{ authError }}</div>
         </div>
-        <div v-if="authError" class="error">{{ authError }}</div>
+
+        <div v-else class="auth-form">
+          <label class="field">用户名： <input v-model="regForm.username" placeholder="用户名" /></label>
+          <label class="field">密码： <input v-model="regForm.password" type="password" placeholder="密码" /></label>
+          <label class="field">显示名： <input v-model="regForm.displayName" placeholder="显示名 (可选)" /></label>
+          <div class="actions">
+            <button class="log-btn" @click="register" :disabled="isLoading">注册</button>
+          </div>
+          <div v-if="authError" class="error">{{ authError }}</div>
+        </div>
       </div>
     </div>
 
     <div v-else>
       <div class="me-user">
-        <div>已登录: <strong>{{ user.username }}</strong><span v-if="user.displayName">（{{ user.displayName }}）</span></div>
-        <div style="margin-top:8px;"><button class="log-btn" @click="logout">退出</button></div>
+        <div class="me-user-info">已登录: <strong>{{ user.username }}</strong><span v-if="user.displayName">（{{ user.displayName }}）</span></div>
+        <div class="me-user-actions"><button class="log-btn" @click="logout">退出</button></div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h3>我的设备</h3>
+        <div v-if="devices.length === 0" class="log-empty">尚无设备。</div>
+        <ul v-else class="device-list">
+          <li v-for="d in devices" :key="d.id || d.deviceId" class="device-item">
+              <div class="device-main">
+              <div><strong>{{ d.deviceId }}</strong> <span class="device-name">{{ d.name || '—' }}</span></div>
+              <div class="device-meta">序列号: {{ d.serial || '—' }} ；创建: {{ formatTs(d.createdAt) }}</div>
+              </div>
+              <button class="icon-btn edit-right" @click.stop="openEditDevice(d)" title="编辑">
+                <img :src="editIcon" alt="edit" />
+              </button>
+          </li>
+        </ul>
+      </div>
+
+      <!-- 编辑弹窗 -->
+      <div v-if="editingDevice" class="edit-modal" @click.self="closeEdit">
+        <div class="card edit-card">
+          <h3>编辑设备</h3>
+          <label class="field">设备 ID（不可修改）： <input v-model="editingForm.deviceId" disabled /></label>
+          <label class="field">设备名称： <input v-model="editingForm.name" /></label>
+          <label class="field">序列号： <input v-model="editingForm.serial" /></label>
+          <div class="actions">
+            <button class="log-btn" @click="saveEditDevice" :disabled="isLoading">保存</button>
+            <button class="log-btn cancel" @click="closeEdit">取消</button>
+            <button class="log-btn delete" @click="deleteDevice(editingDevice)" :disabled="isLoading">删除</button>
+          </div>
+          <div v-if="deviceMsg" class="info">{{ deviceMsg }}</div>
+        </div>
       </div>
 
       <div class="card">
@@ -45,18 +80,7 @@
         <div class="actions">
           <button class="log-btn" @click="addDevice" :disabled="isLoading">添加设备</button>
         </div>
-        <div v-if="deviceMsg" class="info">{{ deviceMsg }}</div>
-      </div>
-
-      <div class="card" style="margin-top:12px;">
-        <h3>我的设备</h3>
-        <div v-if="devices.length === 0" class="log-empty">尚无设备。</div>
-        <ul v-else class="device-list">
-          <li v-for="d in devices" :key="d.deviceId" class="device-item">
-            <div><strong>{{ d.deviceId }}</strong> <span class="device-name">{{ d.name || '—' }}</span></div>
-            <div class="device-meta">序列号: {{ d.serial || '—' }} ；创建: {{ formatTs(d.createdAt) }}</div>
-          </li>
-        </ul>
+        
       </div>
     </div>
 
@@ -65,6 +89,8 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import MessageModal from '../components/MessageModal.vue'
+import editIcon from '../assets/edit.svg'
 onMounted(() => { document.title = '骑行头盔用户站-Me' })
 
 const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
@@ -79,6 +105,11 @@ const isLoading = ref(false)
 const deviceForm = ref({ deviceId: '', name: '', serial: '' })
 const deviceMsg = ref('')
 const devices = ref([])
+
+// 编辑/删除相关状态
+const editingDevice = ref(null)
+const editingForm = ref({ id: null, deviceId: '', name: '', serial: '' })
+const msgModal = ref(null)
 
 function saveUserToStorage(u) {
   if (u) localStorage.setItem('ride_user', JSON.stringify(u))
@@ -156,45 +187,138 @@ async function addDevice() {
   try {
     const body = { deviceId: deviceForm.value.deviceId, name: deviceForm.value.name || null, serial: deviceForm.value.serial || null, userId: user.value.id }
     const res = await fetch(`${backendBase.replace(/\/$/, '')}/api/devices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    const j = await res.json()
-    if (!res.ok) { deviceMsg.value = '添加设备失败: ' + (j?.error || res.status); return }
-    if (j && j.existing) {
-      deviceMsg.value = '设备已存在（已关联或重复）。'
-    } else {
-      deviceMsg.value = '设备已添加。'
+    const j = await res.json().catch(() => null)
+    if (!res.ok) {
+      if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '添加设备失败', message: '添加设备失败: ' + (j?.error || res.status), type: 'error' })
+      return
     }
+    // refresh list first so UI reflects the change
+    await refreshDevices()
     deviceForm.value.deviceId = ''
     deviceForm.value.name = ''
     deviceForm.value.serial = ''
-    await refreshDevices()
+    if (j && j.existing) {
+      if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '添加设备', message: '设备已存在（已关联或重复）。', type: 'warn' })
+    } else {
+      if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '添加设备', message: '设备已添加。', type: 'success' })
+    }
   } catch (e) {
     console.error('addDevice error', e)
-    deviceMsg.value = e?.message || String(e)
+    if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '添加设备失败', message: e?.message || String(e), type: 'error' })
   } finally { isLoading.value = false }
 }
 
 if (user.value) refreshDevices()
+
+function openEditDevice(d) {
+  editingDevice.value = d
+  editingForm.value = { id: d.id, deviceId: d.deviceId, name: d.name, serial: d.serial }
+  deviceMsg.value = ''
+}
+
+function closeEdit() {
+  editingDevice.value = null
+  editingForm.value = { id: null, deviceId: '', name: '', serial: '' }
+}
+
+async function saveEditDevice() {
+  deviceMsg.value = ''
+  if (!editingForm.value.deviceId) { deviceMsg.value = '设备 ID 为必填'; return }
+  isLoading.value = true
+  try {
+    // 使用原始 deviceId（editingDevice.deviceId）作为路径参数，因为后端不支持修改主键 device_id
+    const originalId = editingDevice.value?.deviceId || editingForm.value.deviceId
+    const res = await fetch(`${backendBase.replace(/\/$/, '')}/api/devices/${encodeURIComponent(originalId)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: editingForm.value.name || null, serial: editingForm.value.serial || null, userId: user.value?.id })
+    })
+    const j = await res.json().catch(() => null)
+    if (!res.ok) { deviceMsg.value = '更新失败: ' + (j?.error || res.status); return }
+    deviceMsg.value = '设备已更新'
+    await refreshDevices()
+    closeEdit()
+  } catch (e) {
+    console.error('saveEditDevice error', e)
+    deviceMsg.value = e?.message || String(e)
+  } finally { isLoading.value = false }
+}
+
+async function deleteDevice(d) {
+  if (!d) return
+  const deviceId = d.deviceId || d.device_id || (d.id ? String(d.id) : null)
+  if (!deviceId) { if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '删除设备失败', message: '无法识别设备 ID，删除失败', type: 'error' }); return }
+  // 使用 MessageModal 进行确认
+  try {
+    const ans = await (msgModal.value && msgModal.value.open ? msgModal.value.open({ title: '删除设备', message: `确定删除设备 ${deviceId}？此操作不可恢复。`, showCancel: true }) : Promise.resolve({ action: 'confirm' }))
+    if (!ans || ans.action !== 'confirm') return
+  } catch (e) {
+    return
+  }
+  deviceMsg.value = ''
+  isLoading.value = true
+  try {
+    const res = await fetch(`${backendBase.replace(/\/$/, '')}/api/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' })
+    const j = await res.json().catch(() => null)
+    if (!res.ok) {
+      if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '删除失败', message: '删除失败: ' + (j?.error || res.status), type: 'error' })
+      return
+    }
+    // 刷新列表并用 modal 通知（红色）
+    await refreshDevices()
+    if (editingDevice.value && editingDevice.value.deviceId === deviceId) closeEdit()
+    if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '删除设备', message: '设备已删除', type: 'error' })
+  } catch (e) {
+    console.error('deleteDevice error', e)
+    if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '删除失败', message: e?.message || String(e), type: 'error' })
+  } finally { isLoading.value = false }
+}
 </script>
 
 <style scoped>
 .panel-view {
+  --left-col: 34px;
   max-width: 900px;
   margin: 0 auto;
-  color: #222;
+  color: #111;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(33,150,243,0.07), 0 1.5px 6px rgba(0,0,0,0.04);
+  padding: 24px 18px 40px 18px;
+  font-size: 15px;
 }
 .me-header h2 { margin: 0 0 12px 0; }
-.auth-tabs { display:flex; gap:8px; margin-bottom:12px }
-.auth-tabs button { padding:8px 12px; border-radius:8px; border:1px solid #e3eaf2; background:#fff }
+.auth-tabs { display:flex; gap:8px; margin-bottom:12px; justify-content:center; align-items:center }
+.auth-tabs button { padding:8px 12px; border-radius:8px; border:1px solid #bcdffb; background:#fff }
 .auth-tabs button.active { background:#2196f3; color:#fff; border-color:#1976d2 }
-.auth-form .field { display:block; margin:8px 0 }
-.field input { padding:8px 10px; border-radius:6px; border:1px solid #dfeefb; width:100% }
+.auth-form .field, .card .field { display:flex; align-items:center; gap:8px; margin:8px 0 }
+.field input { padding:8px 10px; border-radius:6px; border:1px solid #bcdffb; width:320px; max-width:100%; box-sizing:border-box }
 .actions { margin-top:8px }
-.log-btn { background: #2196f3; color: #fff; border: none; border-radius: 8px; padding: 8px 18px; font-size: 15px; font-weight: 500; cursor: pointer; }
-.card { background:#fff; border-radius:10px; padding:12px; border:1px solid #eef6ff }
+.log-btn { background: #2196f3; color: #fff; border: none; border-radius: 8px; padding: 8px 18px; font-size: 15px; font-weight: 500; cursor: pointer; box-shadow: 0 2px 8px rgba(33,150,243,0.08); transition: background 0.2s }
+.log-btn:hover { background: #1976d2 }
+.card { background:#fff; border-radius:10px; margin-bottom:12px; padding:12px; border:1px solid #e3eaf2; box-shadow: 0 1.5px 6px rgba(33,150,243,0.04) }
+.auth-card { padding: 16px }
 .log-empty { color: #888; background: #f7fafd; border-radius: 8px; padding: 12px; text-align: center }
 .device-list { list-style:none; padding:0; margin:0 }
-.device-item { padding:8px 0; border-bottom:1px solid #f0f6fb }
+.device-item { padding:8px 0; border-bottom:1px solid #f0f6fb; display:flex; align-items:center; gap:8px; position:relative; }
+.device-main { flex:1; cursor:default; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding-right:8px }
+.device-main div { line-height:1.4 }
 .device-meta { color:#666; font-size:13px }
+.icon-btn { background: transparent; border: none; padding:6px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer }
+.icon-btn img { width:18px; height:18px; display:block }
+.icon-btn.delete-left { margin-right:6px }
+.icon-btn.edit-right { margin-left:6px; position:absolute; right:10px; top:50%; transform:translateY(-50%); }
+.edit-modal { position:fixed; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; background: rgba(0,0,0,0.35); z-index:999 }
+.edit-card { width: 480px; max-width:92%; }
+.log-btn.cancel { background:#9e9e9e; margin-left:8px }
+.log-btn.delete { background:#c62828; margin-left:8px }
 .error { color:#c00; margin-top:8px }
 .info { color:#1976d2; margin-top:8px }
+.me-user { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; padding: 0 16px }
+.me-user-info { font-size:15px }
+.me-user-actions { }
+@media (max-width: 600px) {
+  .panel-view { padding: 12px 2vw 10px 2vw; font-size: 16px }
+  .auth-form .field, .card .field { flex-direction: column; align-items: stretch }
+  .field input { width: 100% }
+}
 </style>

@@ -77,6 +77,7 @@ defineExpose({ open })
 .mm-dialog.info { border-left: 4px solid #2196f3; }
 .mm-dialog.warn { border-left: 4px solid #ff9800; }
 .mm-dialog.error { border-left: 4px solid #f44336; }
+.mm-dialog.success { border-left: 4px solid #4caf50; }
 
 .mm-header { font-weight: 600; margin-bottom: 8px; }
 .mm-body { margin-bottom: 8px; color: #333; word-break: break-word; }
