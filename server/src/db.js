@@ -167,7 +167,14 @@ export function insertGpsPoint({ deviceId, ts, lng, lat, speed = null, heading =
       raw_json: rawJson == null ? null : String(rawJson),
       created_at: createdAt == null ? null : Number(createdAt)
     });
-    return { lastInsertRowid: info.lastInsertRowid, changes: info.changes };
+    // 尝试为该设备在 device_sequences 表上递增序号（容错，不阻塞主流程）
+    try {
+      const seqRes = incDeviceSequence({ tableName: 'gps_points', deviceId: String(deviceId), delta: 1 });
+      return { lastInsertRowid: info.lastInsertRowid, changes: info.changes, seq: seqRes.seq };
+    } catch (e) {
+      console.warn('[DB] incDeviceSequence failed for gps_points', e && e.message ? e.message : e);
+      return { lastInsertRowid: info.lastInsertRowid, changes: info.changes };
+    }
   } catch (err) {
     throw err;
   }
@@ -234,7 +241,14 @@ export function addDeviceCommand({ cmdId, deviceId, ts, type, action, valueJson 
 
   try {
     const info = stmts.insertCmd.run({ cmd_id: String(cmdId), device_id: String(deviceId), ts: Number(ts), type: String(type), action: String(action), value_json: valueJsonStr, status: 'queued', retries: 0 });
-    return { lastInsertRowid: info.lastInsertRowid, cmdId };
+    // 增加 device_commands 的设备级序号（容错）
+    try {
+      const seqRes = incDeviceSequence({ tableName: 'device_commands', deviceId: String(deviceId), delta: 1 });
+      return { lastInsertRowid: info.lastInsertRowid, cmdId, seq: seqRes.seq };
+    } catch (e) {
+      console.warn('[DB] incDeviceSequence failed for device_commands', e && e.message ? e.message : e);
+      return { lastInsertRowid: info.lastInsertRowid, cmdId };
+    }
   } catch (err) {
     // 若唯一约束冲突，则返回已有记录，便于幂等。
     if (err && err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint'))) {
