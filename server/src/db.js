@@ -65,6 +65,20 @@ function prepareStatements() {
   stmts.insertDeviceSequence = db.prepare(`INSERT INTO device_sequences (table_name, device_id, seq, last_updated) VALUES (@table_name, @device_id, @seq, @last_updated)`);
 
   stmts.updateDeviceSequence = db.prepare(`UPDATE device_sequences SET seq = @seq, last_updated = @last_updated WHERE table_name = @table_name AND device_id = @device_id`);
+  
+  // users statements (minimal CRUD for testing)
+  stmts.insertUser = db.prepare(`INSERT INTO users (username, password_hash, display_name, created_at)
+    VALUES (@username, @password_hash, @display_name, @created_at)`);
+
+  stmts.getUserByUsername = db.prepare(`SELECT id, username, password_hash, display_name, created_at FROM users WHERE username = @username`);
+
+  stmts.getUserById = db.prepare(`SELECT id, username, password_hash, display_name, created_at FROM users WHERE id = @id`);
+
+  stmts.listUsers = db.prepare(`SELECT id, username, password_hash, display_name, created_at FROM users ORDER BY created_at DESC LIMIT @limit OFFSET @offset`);
+
+  stmts.updateUserByUsername = db.prepare(`UPDATE users SET password_hash = @password_hash, display_name = @display_name WHERE username = @username`);
+
+  stmts.deleteUserByUsername = db.prepare(`DELETE FROM users WHERE username = @username`);
 }
 
 /**
@@ -395,5 +409,72 @@ export function incDeviceSequence({ tableName, deviceId, delta = 1 } = {}) {
 }
 
 export { db };
+
+// Users CRUD functions
+export function addUser({ username, password, displayName = null, createdAt = null } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!username || !password) throw new Error('username and password are required.');
+  const created = createdAt == null ? Date.now() : Number(createdAt);
+  try {
+    const info = stmts.insertUser.run({ username: String(username), password_hash: String(password), display_name: displayName == null ? null : String(displayName), created_at: created });
+    return { lastInsertRowid: info.lastInsertRowid, createdAt: created };
+  } catch (err) {
+    // UNIQUE 违例 -> 返回 existing=true 并提供已有行（参照 addDeviceCommand 风格）
+    if (err && err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint'))) {
+      console.error('addUser unique constraint:', err && err.message ? err.message : err);
+      try {
+        const row = stmts.getUserByUsername.get({ username: String(username) });
+        return { existing: true, row };
+      } catch (e2) {
+        console.error('addUser failed to fetch existing user:', e2 && e2.message ? e2.message : e2);
+        return { existing: true };
+      }
+    }
+    console.error('addUser DB error:', err && err.message ? err.message : err);
+    throw err;
+  }
+}
+
+export function getUserByUsername(username) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!username) throw new Error('username is required.');
+  const row = stmts.getUserByUsername.get({ username: String(username) });
+  return row || null;
+}
+
+export function getUserById(id) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (id == null) throw new Error('id is required.');
+  const row = stmts.getUserById.get({ id: Number(id) });
+  return row || null;
+}
+
+export function listUsers({ limit = 100, offset = 0 } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  const rows = stmts.listUsers.all({ limit: Number(limit), offset: Number(offset) });
+  return rows;
+}
+
+export function updateUser(username, updates = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!username) throw new Error('username is required.');
+  if (!updates || Object.keys(updates).length === 0) throw new Error('No fields to update provided.');
+  const sets = [];
+  const params = { username: String(username) };
+  if (updates.password !== undefined) { sets.push('password_hash = @password_hash'); params.password_hash = updates.password == null ? null : String(updates.password); }
+  if (updates.displayName !== undefined) { sets.push('display_name = @display_name'); params.display_name = updates.displayName == null ? null : String(updates.displayName); }
+  if (sets.length === 0) throw new Error('No fields to update provided.');
+  const sql = `UPDATE users SET ${sets.join(', ')} WHERE username = @username`;
+  const stmt = db.prepare(sql);
+  const info = stmt.run(params);
+  return { changes: info.changes };
+}
+
+export function removeUser(username) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!username) throw new Error('username is required.');
+  const info = stmts.deleteUserByUsername.run({ username: String(username) });
+  return { changes: info.changes };
+}
 
 // 我已完成：server/src/schema.sql 和 server/src/db.js（不包含 git 操作）

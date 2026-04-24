@@ -66,3 +66,12 @@ CREATE TABLE IF NOT EXISTS device_sequences (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_device_sequences_table_device ON device_sequences(table_name, device_id);
 
 -- 我已完成：server/src/schema.sql 和 server/src/db.js（不包含 git 操作）
+
+-- Users table: basic user store for testing (password_hash stores plaintext on purpose)
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  display_name TEXT NULL,
+  created_at INTEGER
+);
