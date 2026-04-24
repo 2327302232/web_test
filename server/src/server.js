@@ -16,6 +16,7 @@ import { startMqtt, stopMqtt, on as onMqtt } from './mqtt.js';
 import express from 'express';
 import commandRouter from './api/command.js';
 import trackRouter from './api/track.js';
+import devicesRouter from './api/devices.js';
 
 let shuttingDown = false;
 let httpServer = null;
@@ -51,6 +52,7 @@ async function start() {
       // mount command router and track router
       app.use(commandRouter);
       app.use(trackRouter);
+      app.use(devicesRouter);
 
       const port = process.env.PORT ? Number(process.env.PORT) : 8787;
       httpServer = app.listen(port, () => console.log(`HTTP server listening on port ${port}`));

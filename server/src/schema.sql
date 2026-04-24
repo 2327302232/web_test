@@ -41,4 +41,28 @@ CREATE TABLE IF NOT EXISTS device_commands (
 
 CREATE INDEX IF NOT EXISTS idx_cmd_device_ts ON device_commands(device_id, ts);
 
+-- Devices table: 存放设备元信息（安全使用 IF NOT EXISTS）
+CREATE TABLE IF NOT EXISTS devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT NOT NULL UNIQUE,
+  serial TEXT,
+  name TEXT,
+  user_id TEXT,
+  metadata TEXT,
+  created_at INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
+
+-- Device sequences: 应用层按 (table_name, device_id) 存放自定义序号，替代直接修改 sqlite_sequence
+CREATE TABLE IF NOT EXISTS device_sequences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  table_name TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  last_updated INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_device_sequences_table_device ON device_sequences(table_name, device_id);
+
 -- 我已完成：server/src/schema.sql 和 server/src/db.js（不包含 git 操作）

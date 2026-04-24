@@ -47,6 +47,24 @@ function prepareStatements() {
   stmts.getCmdById = db.prepare(`SELECT * FROM device_commands WHERE cmd_id = @cmd_id`);
 
   stmts.getPending = db.prepare(`SELECT * FROM device_commands WHERE device_id = @device_id AND status IN ('queued','sent') ORDER BY ts ASC`);
+
+  // devices / device_sequences statements
+  stmts.insertDevice = db.prepare(`INSERT INTO devices (device_id, serial, name, user_id, metadata, created_at)
+    VALUES (@device_id, @serial, @name, @user_id, @metadata, @created_at)`);
+
+  stmts.getDeviceById = db.prepare(`SELECT id, device_id AS deviceId, serial, name, user_id AS userId, metadata, created_at AS createdAt FROM devices WHERE device_id = @device_id`);
+
+  stmts.listDevicesMeta = db.prepare(`SELECT id, device_id AS deviceId, serial, name, user_id AS userId, metadata, created_at AS createdAt FROM devices ORDER BY created_at DESC LIMIT @limit OFFSET @offset`);
+
+  stmts.updateDeviceById = db.prepare(`UPDATE devices SET serial = @serial, name = @name, user_id = @user_id, metadata = @metadata WHERE device_id = @device_id`);
+
+  stmts.deleteDeviceById = db.prepare(`DELETE FROM devices WHERE device_id = @device_id`);
+
+  stmts.getDeviceSequence = db.prepare(`SELECT seq, last_updated FROM device_sequences WHERE table_name = @table_name AND device_id = @device_id`);
+
+  stmts.insertDeviceSequence = db.prepare(`INSERT INTO device_sequences (table_name, device_id, seq, last_updated) VALUES (@table_name, @device_id, @seq, @last_updated)`);
+
+  stmts.updateDeviceSequence = db.prepare(`UPDATE device_sequences SET seq = @seq, last_updated = @last_updated WHERE table_name = @table_name AND device_id = @device_id`);
 }
 
 /**
@@ -267,6 +285,99 @@ export function getPendingCommands({ deviceId } = {}) {
   if (!db) throw new Error('Database not initialized. Call initDb() first.');
   if (!deviceId) throw new Error('deviceId is required.');
   return stmts.getPending.all({ device_id: String(deviceId) });
+}
+
+/* Devices management API */
+export function addDevice({ deviceId, serial = null, name = null, userId = null, metadata = null, createdAt = null } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!deviceId) throw new Error('deviceId is required.');
+  const created = createdAt == null ? Date.now() : Number(createdAt);
+  try {
+    const info = stmts.insertDevice.run({ device_id: String(deviceId), serial: serial == null ? null : String(serial), name: name == null ? null : String(name), user_id: userId == null ? null : String(userId), metadata: metadata == null ? null : String(metadata), created_at: created });
+    return { lastInsertRowid: info.lastInsertRowid, createdAt: created };
+  } catch (err) {
+    if (err && err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint'))) {
+      const row = stmts.getDeviceById.get({ device_id: String(deviceId) });
+      return { existing: true, row };
+    }
+    throw err;
+  }
+}
+
+export function getDevice(deviceId) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!deviceId) throw new Error('deviceId is required.');
+  const row = stmts.getDeviceById.get({ device_id: String(deviceId) });
+  return row || null;
+}
+
+export function listRegisteredDevices({ limit = 100, offset = 0 } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  const rows = stmts.listDevicesMeta.all({ limit: Number(limit), offset: Number(offset) });
+  return rows;
+}
+
+export function updateDevice(deviceId, updates = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!deviceId) throw new Error('deviceId is required.');
+  const sets = [];
+  const params = { device_id: String(deviceId) };
+  if (updates.serial !== undefined) { sets.push('serial = @serial'); params.serial = updates.serial == null ? null : String(updates.serial); }
+  if (updates.name !== undefined) { sets.push('name = @name'); params.name = updates.name == null ? null : String(updates.name); }
+  if (updates.userId !== undefined) { sets.push('user_id = @user_id'); params.user_id = updates.userId == null ? null : String(updates.userId); }
+  if (updates.metadata !== undefined) { sets.push('metadata = @metadata'); params.metadata = updates.metadata == null ? null : String(updates.metadata); }
+  if (sets.length === 0) throw new Error('No fields to update provided');
+  const sql = `UPDATE devices SET ${sets.join(', ')} WHERE device_id = @device_id`;
+  const stmt = db.prepare(sql);
+  const info = stmt.run(params);
+  return { changes: info.changes };
+}
+
+export function removeDevice(deviceId) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!deviceId) throw new Error('deviceId is required.');
+  const info = stmts.deleteDeviceById.run({ device_id: String(deviceId) });
+  return { changes: info.changes };
+}
+
+/* device_sequences operations */
+export function getDeviceSequence({ tableName, deviceId } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!tableName || !deviceId) throw new Error('tableName and deviceId are required.');
+  const row = stmts.getDeviceSequence.get({ table_name: String(tableName), device_id: String(deviceId) });
+  return row ? { seq: row.seq, lastUpdated: row.last_updated } : null;
+}
+
+export function setDeviceSequence({ tableName, deviceId, seq } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!tableName || !deviceId) throw new Error('tableName and deviceId are required.');
+  const now = Date.now();
+  const existing = stmts.getDeviceSequence.get({ table_name: String(tableName), device_id: String(deviceId) });
+  if (existing) {
+    const info = stmts.updateDeviceSequence.run({ seq: Number(seq), last_updated: now, table_name: String(tableName), device_id: String(deviceId) });
+    return { changes: info.changes };
+  } else {
+    const info = stmts.insertDeviceSequence.run({ table_name: String(tableName), device_id: String(deviceId), seq: Number(seq), last_updated: now });
+    return { lastInsertRowid: info.lastInsertRowid };
+  }
+}
+
+export function incDeviceSequence({ tableName, deviceId, delta = 1 } = {}) {
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
+  if (!tableName || !deviceId) throw new Error('tableName and deviceId are required.');
+  const tx = db.transaction((tName, dId, dlt) => {
+    const row = stmts.getDeviceSequence.get({ table_name: tName, device_id: dId });
+    const now = Date.now();
+    if (row) {
+      const newSeq = Number(row.seq) + Number(dlt);
+      stmts.updateDeviceSequence.run({ seq: newSeq, last_updated: now, table_name: tName, device_id: dId });
+      return newSeq;
+    }
+    stmts.insertDeviceSequence.run({ table_name: tName, device_id: dId, seq: Number(dlt), last_updated: now });
+    return Number(dlt);
+  });
+  const result = tx(tableName, deviceId, delta);
+  return { seq: result };
 }
 
 export { db };
