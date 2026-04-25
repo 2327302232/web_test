@@ -14,7 +14,7 @@
         </div>
 
         <div v-if="mode==='login'" class="auth-form">
-          <label class="field">用户名： <input v-model="loginForm.username" placeholder="用户名" /></label>
+          <label class="field">账号： <input v-model="loginForm.username" placeholder="账号" /></label>
           <label class="field">密码： <input v-model="loginForm.password" type="password" placeholder="密码" /></label>
           <div class="actions">
             <button class="log-btn" @click="login" :disabled="isLoading">登录</button>
@@ -23,9 +23,9 @@
         </div>
 
         <div v-else class="auth-form">
-          <label class="field">用户名： <input v-model="regForm.username" placeholder="用户名" /></label>
+          <label class="field">账号： <input v-model="regForm.username" placeholder="账号" /></label>
           <label class="field">密码： <input v-model="regForm.password" type="password" placeholder="密码" /></label>
-          <label class="field">显示名： <input v-model="regForm.displayName" placeholder="显示名 (可选)" /></label>
+          <label class="field">用户名： <input v-model="regForm.displayName" placeholder="用户名 (可选)" /></label>
           <div class="actions">
             <button class="log-btn" @click="register" :disabled="isLoading">注册</button>
           </div>
@@ -35,8 +35,8 @@
     </div>
 
     <div v-else>
-      <div class="me-user">
-        <div class="me-user-info">已登录: <strong>{{ user.username }}</strong><span v-if="user.displayName">（{{ user.displayName }}）</span></div>
+        <div class="me-user">
+        <div class="me-user-info">已登录: <strong>{{ user.displayName || user.username }}</strong></div>
         <div class="me-user-actions"><button class="log-btn" @click="logout">退出</button></div>
       </div>
 
@@ -66,7 +66,7 @@
           <div class="actions">
             <button class="log-btn" @click="saveEditDevice" :disabled="isLoading">保存</button>
             <button class="log-btn cancel" @click="closeEdit">取消</button>
-            <button class="log-btn delete" @click="deleteDevice(editingDevice)" :disabled="isLoading">删除</button>
+            <button class="log-btn delete" @click="deleteDevice(editingDevice, { confirmType: 'error' })" :disabled="isLoading">删除</button>
           </div>
           <div v-if="deviceMsg" class="info">{{ deviceMsg }}</div>
         </div>
@@ -118,7 +118,7 @@ function saveUserToStorage(u) {
 
 async function register() {
   authError.value = ''
-  if (!regForm.value.username || !regForm.value.password) { authError.value = '用户名与密码为必填'; return }
+  if (!regForm.value.username || !regForm.value.password) { authError.value = '账号与密码为必填'; return }
   isLoading.value = true
   try {
     const res = await fetch(`${backendBase.replace(/\/$/, '')}/api/test/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: regForm.value.username, password: regForm.value.password, displayName: regForm.value.displayName }) })
@@ -137,11 +137,11 @@ async function register() {
 
 async function login() {
   authError.value = ''
-  if (!loginForm.value.username || !loginForm.value.password) { authError.value = '用户名与密码为必填'; return }
+  if (!loginForm.value.username || !loginForm.value.password) { authError.value = '账号与密码为必填'; return }
   isLoading.value = true
   try {
     const res = await fetch(`${backendBase.replace(/\/$/, '')}/api/test/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: loginForm.value.username, password: loginForm.value.password }) })
-    if (res.status === 401) { authError.value = '用户名或密码错误'; return }
+    if (res.status === 401) { authError.value = '账号或密码错误'; return }
     const j = await res.json()
     user.value = { id: j.id, username: j.username, displayName: j.displayName }
     saveUserToStorage(user.value)
@@ -243,13 +243,14 @@ async function saveEditDevice() {
   } finally { isLoading.value = false }
 }
 
-async function deleteDevice(d) {
+async function deleteDevice(d, opts = {}) {
   if (!d) return
   const deviceId = d.deviceId || d.device_id || (d.id ? String(d.id) : null)
   if (!deviceId) { if (msgModal.value && msgModal.value.open) await msgModal.value.open({ title: '删除设备失败', message: '无法识别设备 ID，删除失败', type: 'error' }); return }
   // 使用 MessageModal 进行确认
   try {
-    const ans = await (msgModal.value && msgModal.value.open ? msgModal.value.open({ title: '删除设备', message: `确定删除设备 ${deviceId}？此操作不可恢复。`, showCancel: true }) : Promise.resolve({ action: 'confirm' }))
+    const confirmType = opts && opts.confirmType ? opts.confirmType : 'warn'
+    const ans = await (msgModal.value && msgModal.value.open ? msgModal.value.open({ title: '删除设备', message: `确定删除设备 ${deviceId}？此操作不可恢复。`, showCancel: true, type: confirmType }) : Promise.resolve({ action: 'confirm' }))
     if (!ans || ans.action !== 'confirm') return
   } catch (e) {
     return
@@ -286,7 +287,7 @@ async function deleteDevice(d) {
   padding: 24px 18px 40px 18px;
   font-size: 15px;
 }
-.me-header h2 { margin: 0 0 12px 0; }
+.me-header h2 {display: flex; margin: 0 0 12px 0; justify-content: center; }
 .auth-tabs { display:flex; gap:8px; margin-bottom:12px; justify-content:center; align-items:center }
 .auth-tabs button { padding:8px 12px; border-radius:8px; border:1px solid #bcdffb; background:#fff }
 .auth-tabs button.active { background:#2196f3; color:#fff; border-color:#1976d2 }

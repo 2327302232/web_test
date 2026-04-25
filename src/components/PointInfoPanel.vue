@@ -6,7 +6,7 @@
         <button class="pip-btn pip-prev" @click="onPrev" :disabled="!options.onPrev" title="上一个" aria-label="上一个">
           <img v-if="icons && icons.prev" :src="icons.prev" alt="上一个" />
         </button>
-        <button class="pip-btn pip-play" @click="onTogglePlay" :title="isPlaying ? '停止' : '开始'" :aria-label="isPlaying ? '停止' : '开始'">
+        <button class="pip-btn pip-play" @click="onTogglePlay" :disabled="!options.onTogglePlay || (!options.canPlay && !isPlaying)" :title="isPlaying ? '停止' : (options.canPlay ? '开始' : '无法播放')" :aria-label="isPlaying ? '停止' : (options.canPlay ? '开始' : '无法播放')">
           <img v-if="(isPlaying ? icons.stop : icons.play)" :src="isPlaying ? icons.stop : icons.play" :alt="isPlaying ? '停止' : '开始'" />
         </button>
         <button class="pip-btn pip-next" @click="onNext" :disabled="!options.onNext" title="下一个" aria-label="下一个">
@@ -34,7 +34,7 @@ import panelIcons from '../lib/panelIcons.js'
 
 const visible = ref(false)
 const containerRef = ref(null)
-const options = reactive({ title: '', data: null, onPrev: null, onNext: null, onTogglePlay: null })
+const options = reactive({ title: '', data: null, onPrev: null, onNext: null, onTogglePlay: null, canPlay: true })
 const icons = reactive({ prev: panelIcons.prev, play: panelIcons.play, stop: panelIcons.stop, next: panelIcons.next })
 const isPlaying = ref(false)
 
@@ -46,6 +46,8 @@ function open(opts = {}) {
   options.onPrev = typeof opts.onPrev === 'function' ? opts.onPrev : null
   options.onNext = typeof opts.onNext === 'function' ? opts.onNext : null
   options.onTogglePlay = typeof opts.onTogglePlay === 'function' ? opts.onTogglePlay : null
+  // whether play action is allowed (if at end, set false to disable play)
+  options.canPlay = typeof opts.canPlay === 'boolean' ? opts.canPlay : true
 
   // allow providing icon URLs via opts.icons
   icons.prev = opts.icons && opts.icons.prev ? opts.icons.prev : icons.prev
@@ -99,7 +101,11 @@ function setIcons(ic = {}) {
   icons.next = ic.next || icons.next
 }
 
-defineExpose({ open, close, prev: onPrev, next: onNext, togglePlay: onTogglePlay, setIcons })
+function setPlaying(v) {
+  isPlaying.value = !!v
+}
+
+defineExpose({ open, close, prev: onPrev, next: onNext, togglePlay: onTogglePlay, setIcons, setPlaying })
 
 // 精确的双击拦截：只在真正的双击（时间短、位移小）时阻止默认缩放
 let _lastTapTime = 0

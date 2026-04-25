@@ -14,6 +14,16 @@ export function closePointPanel() {
   }
 }
 
+export function setPointPanelPlaying(playing) {
+  try {
+    if (panelInstance && typeof panelInstance.setPlaying === 'function') {
+      try { panelInstance.setPlaying(!!playing) } catch (e) { /* ignore */ }
+    }
+  } catch (e) {
+    console.warn('setPointPanelPlaying error', e)
+  }
+}
+
 async function ensurePanel() {
   if (panelInstance) return
   const { createApp } = await import('vue')

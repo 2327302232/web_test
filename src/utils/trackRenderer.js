@@ -1,7 +1,7 @@
 // Track renderer helper for drawing GPS tracks on AMap map instances.
 // Exports: initTrackRenderer(map) -> { renderTrack, clearTrack, appendPoints }
 import { addPolyline, createMarker } from './amap.js'
-import { showPointPanel } from '../composables/usePointPanel'
+import { showPointPanel, setPointPanelPlaying } from '../composables/usePointPanel'
 import { splitByGap } from './segment.js'
 
 function _normalizeTs(raw) {
@@ -173,6 +173,7 @@ export function initTrackRenderer(map) {
     _isPlaying = false
     _playCurrentIndex = -1
     _playSegment = null
+    try { if (typeof setPointPanelPlaying === 'function') setPointPanelPlaying(false) } catch (e) { /* ignore */ }
   }
 
   function _scheduleNextInSegment() {
@@ -255,7 +256,8 @@ export function initTrackRenderer(map) {
         isPlaying: !!_isPlaying,
         onPrev: onPrevFn,
         onNext: onNextFn,
-        onTogglePlay: (playing) => { if (playing) _startAutoPlayFrom(idx); else _stopAutoPlay() }
+        onTogglePlay: (playing) => { if (playing) _startAutoPlayFrom(idx); else _stopAutoPlay() },
+        canPlay: !!onNextFn
       })
       if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
     } catch (e) {
@@ -418,6 +420,7 @@ export function initTrackRenderer(map) {
                 try { seg_clearTimer() } catch (e) { /* ignore */ }
                 segIsPlaying = false
                 segPlayCurrentIndex = -1
+                  try { if (typeof setPointPanelPlaying === 'function') setPointPanelPlaying(false) } catch (e) { /* ignore */ }
               }
 
               function seg_scheduleNext() {
@@ -448,7 +451,7 @@ export function initTrackRenderer(map) {
 
                       const onPrev = segPlayCurrentIndex > startIdx ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex - 1, true) } : null
                       const onNext = segPlayCurrentIndex < segEnd ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex + 1, true) } : null
-                      const p = showPointPanel({ title: '轨迹点信息', data: segPts[segPlayCurrentIndex], isPlaying: true, onPrev, onNext, onTogglePlay: (playing) => { if (!playing) try { seg_stopPlay() } catch (e) {} } })
+                      const p = showPointPanel({ title: '轨迹点信息', data: segPts[segPlayCurrentIndex], isPlaying: true, onPrev, onNext, onTogglePlay: (playing) => { if (!playing) try { seg_stopPlay() } catch (e) {} }, canPlay: !!onNext })
                       if (p && typeof p.finally === 'function') p.finally(() => { try { seg_stopPlay(); _clearSelection() } catch (e) {} })
                     } catch (e) { /* ignore */ }
                     // schedule next step
@@ -472,7 +475,7 @@ export function initTrackRenderer(map) {
                   // open panel for current index in playing state
                   const onPrev = segPlayCurrentIndex > startIdx ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex - 1, true) } : null
                   const onNext = segPlayCurrentIndex < segEnd ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(segPlayCurrentIndex + 1, true) } : null
-                  const p = showPointPanel({ title: '轨迹点信息', data: segPts[segPlayCurrentIndex], isPlaying: true, onPrev, onNext, onTogglePlay: (playing) => { if (!playing) try { seg_stopPlay() } catch (e) {} } })
+                  const p = showPointPanel({ title: '轨迹点信息', data: segPts[segPlayCurrentIndex], isPlaying: true, onPrev, onNext, onTogglePlay: (playing) => { if (!playing) try { seg_stopPlay() } catch (e) {} }, canPlay: !!onNext })
                   if (p && typeof p.finally === 'function') p.finally(() => { try { seg_stopPlay(); _clearSelection() } catch (e) {} })
                   seg_scheduleNext()
                 } catch (e) {
@@ -497,7 +500,7 @@ export function initTrackRenderer(map) {
 
                 const onPrev = idx > startIdx ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(idx - 1) } : null
                 const onNext = idx < segEnd ? () => { try { seg_stopPlay() } catch (e) {} ; openForSegmentIndex(idx + 1) } : null
-                const p = showPointPanel({ title: '轨迹点信息', data: segPts[idx], isPlaying: !!isPlaying, onPrev, onNext, onTogglePlay: (playing) => { if (playing) seg_startPlayFrom(idx); else seg_stopPlay() } })
+                const p = showPointPanel({ title: '轨迹点信息', data: segPts[idx], isPlaying: !!isPlaying, onPrev, onNext, onTogglePlay: (playing) => { if (playing) seg_startPlayFrom(idx); else seg_stopPlay() }, canPlay: !!onNext })
                 if (p && typeof p.finally === 'function') p.finally(() => { try { seg_stopPlay(); _clearSelection() } catch (e) {} })
               }
 
@@ -506,16 +509,33 @@ export function initTrackRenderer(map) {
           }
 
           // Fallback: default global behavior (use lastPoints / openForIndexGlobal)
+          // Robust index resolution: prefer marker reference (startMarker/endMarker/pointMarkers),
+          // then fallback to scanning lastPoints from the end to avoid matching an earlier duplicate.
           const findIndexGlobal = () => {
-            if (!Array.isArray(lastPoints)) return -1
-            return lastPoints.findIndex(p => p && p.ts === point.ts && p.lng === point.lng && p.lat === point.lat)
+            try {
+              if (!Array.isArray(lastPoints) || lastPoints.length === 0) return -1
+              // direct marker references if available
+              if (marker === startMarker) return 0
+              if (marker === endMarker) return Math.max(0, lastPoints.length - 1)
+              if (Array.isArray(pointMarkers) && pointMarkers.length) {
+                const mi = pointMarkers.findIndex(m => m === marker)
+                if (mi >= 0) return mi + 1
+              }
+              // fallback: scan from the end to prefer the most-recent matching point (avoid matching an earlier duplicate)
+              for (let i = lastPoints.length - 1; i >= 0; i--) {
+                const p = lastPoints[i]
+                if (!p) continue
+                if (p.ts === point.ts && p.lng === point.lng && p.lat === point.lat) return i
+              }
+            } catch (e) { /* ignore */ }
+            return -1
           }
 
           const openForIndex = (i) => {
             if (!Array.isArray(lastPoints) || lastPoints.length === 0) {
               // still select the clicked marker and show panel without nav
               try { _selectMarker(marker) } catch (e) { /* ignore */ }
-              const p = showPointPanel({ title, data: point })
+              const p = showPointPanel({ title, data: point, canPlay: false })
               if (p && typeof p.finally === 'function') p.finally(() => { try { _clearSelection() } catch (e) {} })
               return
             }
