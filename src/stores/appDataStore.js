@@ -35,6 +35,24 @@ export const useAppDataStore = defineStore('appData', {
 
       const p = (async () => {
         try {
+          // 优先使用 localStorage 中已有的 ride_user，以兼容当前后端没有 /api/me 的情况
+          if (!force) {
+            try {
+              const stored = localStorage.getItem('ride_user')
+              if (stored) {
+                const parsed = JSON.parse(stored)
+                this.meData = parsed
+                this.meLastFetchedAt = Date.now()
+                this.meError = null
+                console.debug('loadMe:localStorage', parsed)
+                return { ok: true, data: parsed, fromCache: true }
+              }
+            } catch (e) {
+              // ignore parse errors and fall through to network fetch
+            }
+          }
+
+          // 若需要或 localStorage 没有数据，再尝试请求后端的 /api/me（若后端实现）
           const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
           const url = `${backendBase.replace(/\/$/, '')}/api/me`
           const resp = await fetch(url)
@@ -50,9 +68,10 @@ export const useAppDataStore = defineStore('appData', {
           console.debug('loadMe:success', data)
           return { ok: true, data }
         } catch (e) {
+          // 失败时保留旧的 meData（若有），并把错误暴露给 UI
           this.meError = e?.message || String(e)
           console.debug('loadMe:failed', e)
-          return { ok: false, error: this.meError }
+          return { ok: false, error: this.meError, data: this.meData }
         } finally {
           this.meLoading = false
           delete inFlight['me']
@@ -135,13 +154,15 @@ export const useAppDataStore = defineStore('appData', {
       }
       // immediate
       if (target === 'me') {
-        this.loadMe({ force: true }).catch(() => {})
+        // do not force network fetch for `me` on start; prefer local cache to avoid hitting
+        // non-existent /api/me endpoints in some deployments
+        this.loadMe({ force: false }).catch(() => {})
       } else {
         this.loadTrack({ ...(params || {}), force: true }).catch(() => {})
       }
       const id = setInterval(() => {
         if (target === 'me') {
-          this.loadMe({ force: true }).catch(() => {})
+          this.loadMe({ force: false }).catch(() => {})
         } else {
           this.loadTrack({ ...(params || {}), force: true }).catch(() => {})
         }

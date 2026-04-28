@@ -18,6 +18,7 @@ import commandRouter from './api/command.js';
 import trackRouter from './api/track.js';
 import devicesRouter from './api/devices.js';
 import usersRouter from './api/users.js';
+import meRouter from './api/me.js'
 
 let shuttingDown = false;
 let httpServer = null;
@@ -54,6 +55,7 @@ async function start() {
       app.use(commandRouter);
       app.use(trackRouter);
       app.use(devicesRouter);
+      app.use(meRouter);
       app.use(usersRouter);
 
       const port = process.env.PORT ? Number(process.env.PORT) : 8888;
