@@ -56,7 +56,7 @@ async function start() {
       app.use(devicesRouter);
       app.use(usersRouter);
 
-      const port = process.env.PORT ? Number(process.env.PORT) : 8787;
+      const port = process.env.PORT ? Number(process.env.PORT) : 8888;
       httpServer = app.listen(port, () => console.log(`HTTP server listening on port ${port}`));
     } catch (e) {
       console.warn('src/server.js: failed to start HTTP server', e && e.message ? e.message : e);

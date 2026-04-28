@@ -12,6 +12,7 @@
           <button class="log-delete-btn" @click="deleteSelected" title="删除记录">
             <img :src="deleteIcon" alt="删除" />
           </button>
+          <button class="log-btn" :disabled="trackLoading" @click="onRefresh" style="margin-left:8px">刷新</button>
         </div>
       </div>
       <div v-show="filterVisible" ref="filterRef" class="filter-panel">
@@ -95,12 +96,24 @@ onMounted(() => {
   document.title = '骑行头盔用户站-Log'
   nextTick(() => { updatePanelMargin() })
   window.addEventListener('resize', updatePanelMargin)
+  // start polling for current device
+  try { appStore.startPolling({ target: 'track', params: { deviceId: deviceId.value }, intervalMs: appStore.defaultPollingIntervalMs }) } catch (e) {}
 })
 
 onUnmounted(() => { try { window.removeEventListener('resize', updatePanelMargin) } catch (e) {} })
+onUnmounted(() => { try { appStore.stopPolling({ target: 'track', params: { deviceId: deviceId.value } }) } catch (e) {} })
 
 const deviceId = ref('all')
 const segments = ref([])
+// use app store for track cache and polling
+import { useAppDataStore } from '../stores/appDataStore'
+const appStore = useAppDataStore()
+
+function getCurrentTrackKey() {
+  return appStore.getTrackKey({ deviceId: deviceId.value })
+}
+
+const trackLoading = ref(false)
 // filter state
 const filterVisible = ref(false)
 const filterDevice = ref('all')
@@ -256,84 +269,74 @@ async function load() {
     if (!devicesList.value || devicesList.value.length === 0) {
       await loadDevicesList()
     }
-
     // clear previous meta and selection
     selectionStore.meta = {}
     selectionStore.clear()
     segments.value = []
 
+    // Use appStore to load track(s)
+    selectionStore.meta = {}
+    const combine = []
     if (deviceId.value === 'all') {
-      // combine tracks for all devices in devicesList (current user's devices)
       const devices = Array.isArray(devicesList.value) ? devicesList.value : []
-      const combined = []
       for (const d of devices) {
+        const dId = d.deviceId || d.device_id
+        if (!dId) continue
+        trackLoading.value = true
+        const res = await appStore.loadTrack({ deviceId: dId }).catch(() => ({ ok: false }))
+        trackLoading.value = false
+        const pts = (res && res.ok) ? (res.points || []) : []
         try {
-          const dId = d.deviceId || d.device_id
-          if (!dId) continue
-          const params = new URLSearchParams()
-          params.set('deviceId', dId)
-          const url = `${backendBase.replace(/\/$/, '')}/api/track?${params.toString()}`
-          const resp = await fetch(url)
-          if (!resp.ok) { console.warn('fetch track failed for', dId, resp.status); continue }
-          const data = await resp.json()
-          const pts = Array.isArray(data.points) ? data.points : []
-          const res = segmentTrack(pts)
-          const segs = res.segments || []
-          for (const seg of segs) {
-            seg.deviceId = dId
-            combined.push(seg)
-          }
-        } catch (e) {
-          console.warn('failed processing device', d, e)
-        }
+          const segRes = segmentTrack(pts)
+          const segs = segRes.segments || []
+          for (const seg of segs) { seg.deviceId = dId; combine.push(seg) }
+        } catch (e) { console.warn('segmentTrack failed', e) }
       }
-      combined.sort((a, b) => (a.points[0]?.ts || 0) - (b.points[0]?.ts || 0))
-      segments.value = combined
-      segments.value.forEach((seg, idx) => {
-        const id = segmentId(seg, idx)
-        const meta = {
-          deviceId: seg.deviceId,
-          startTs: seg.points[0]?.ts,
-          endTs: seg.points[seg.points.length - 1]?.ts,
-          pointCount: seg.points.length,
-          startLng: seg.points[0]?.lng,
-          startLat: seg.points[0]?.lat,
-          endLng: seg.points[seg.points.length - 1]?.lng,
-          endLat: seg.points[seg.points.length - 1]?.lat,
-        }
-        selectionStore.registerMeta(id, meta)
-      })
+      combine.sort((a, b) => (a.points[0]?.ts || 0) - (b.points[0]?.ts || 0))
+      segments.value = combine
     } else {
-      const params = new URLSearchParams()
-      params.set('deviceId', deviceId.value)
-      const url = `${backendBase.replace(/\/$/, '')}/api/track?${params.toString()}`
-      const resp = await fetch(url)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data = await resp.json()
-      const pts = Array.isArray(data.points) ? data.points : []
-      const res = segmentTrack(pts)
-      const segs = res.segments || []
-      // annotate and register
-      segs.forEach((seg, idx) => { seg.deviceId = deviceId.value })
+      trackLoading.value = true
+      const res = await appStore.loadTrack({ deviceId: deviceId.value }).catch(() => ({ ok: false }))
+      trackLoading.value = false
+      const pts = (res && res.ok) ? (res.points || []) : []
+      const segRes = segmentTrack(pts)
+      const segs = segRes.segments || []
+      segs.forEach((seg) => { seg.deviceId = deviceId.value })
       segments.value = segs
-      segments.value.forEach((seg, idx) => {
-        const id = segmentId(seg, idx)
-        const meta = {
-          deviceId: deviceId.value,
-          startTs: seg.points[0]?.ts,
-          endTs: seg.points[seg.points.length - 1]?.ts,
-          pointCount: seg.points.length,
-          startLng: seg.points[0]?.lng,
-          startLat: seg.points[0]?.lat,
-          endLng: seg.points[seg.points.length - 1]?.lng,
-          endLat: seg.points[seg.points.length - 1]?.lat,
-        }
-        selectionStore.registerMeta(id, meta)
-      })
     }
+
+    // register meta for selectionStore
+    segments.value.forEach((seg, idx) => {
+      const id = segmentId(seg, idx)
+      const meta = {
+        deviceId: seg.deviceId,
+        startTs: seg.points[0]?.ts,
+        endTs: seg.points[seg.points.length - 1]?.ts,
+        pointCount: seg.points.length,
+        startLng: seg.points[0]?.lng,
+        startLat: seg.points[0]?.lat,
+        endLng: seg.points[seg.points.length - 1]?.lng,
+        endLat: seg.points[seg.points.length - 1]?.lat,
+      }
+      selectionStore.registerMeta(id, meta)
+    })
   } catch (e) {
     console.error('load segments failed', e)
     segments.value = []
+  }
+}
+
+async function onRefresh() {
+  // force refresh current device
+  const params = { deviceId: deviceId.value }
+  try {
+    trackLoading.value = true
+    await appStore.manualRefresh({ target: 'track', params })
+  } catch (e) {
+    console.debug('manual refresh track failed', e)
+  } finally {
+    trackLoading.value = false
+    await load()
   }
 }
 

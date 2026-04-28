@@ -3,7 +3,9 @@
     <MessageModal ref="msgModal" />
 
     <div class="me-header">
-      <h2>个人中心</h2>
+      <h2 style="display:flex;align-items:center;justify-content:space-between">个人中心
+        <button class="log-btn" :disabled="store.meLoading" @click="onRefresh" style="margin-left:12px;align-self:center">刷新</button>
+      </h2>
     </div>
 
     <div v-if="!user">
@@ -35,6 +37,11 @@
     </div>
 
     <div v-else>
+      <div style="margin-bottom:8px">
+        <span v-if="store.meLoading" style="color:#1976d2;margin-right:8px">加载中...</span>
+        <span v-if="store.meLastFetchedAt">上次更新时间: {{ formatTs(store.meLastFetchedAt) }}</span>
+        <div v-if="store.meError" style="color:#c62828;margin-top:6px">刷新失败，使用旧数据：{{ store.meError }}</div>
+      </div>
         <div class="me-user">
         <div class="me-user-info">已登录: <strong>{{ user.displayName || user.username }}</strong></div>
         <div class="me-user-actions"><button class="log-btn" @click="logout">退出</button></div>
@@ -88,7 +95,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import MessageModal from '../components/MessageModal.vue'
 import editIcon from '../assets/edit.svg'
 onMounted(() => { document.title = '骑行头盔用户站-Me' })
@@ -110,6 +117,28 @@ const devices = ref([])
 const editingDevice = ref(null)
 const editingForm = ref({ id: null, deviceId: '', name: '', serial: '' })
 const msgModal = ref(null)
+
+// Pinia store
+import { useAppDataStore } from '../stores/appDataStore'
+const store = useAppDataStore()
+
+onMounted(async () => {
+  // ensure me data loaded and polling started
+  await store.loadMe().catch(() => {})
+  store.startPolling({ target: 'me', intervalMs: store.defaultPollingIntervalMs })
+})
+
+onBeforeUnmount(() => {
+  store.stopPolling({ target: 'me' })
+})
+
+async function onRefresh() {
+  try {
+    await store.manualRefresh({ target: 'me' })
+  } catch (e) {
+    console.debug('manual refresh me failed', e)
+  }
+}
 
 function saveUserToStorage(u) {
   if (u) localStorage.setItem('ride_user', JSON.stringify(u))
