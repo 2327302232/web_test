@@ -4,15 +4,17 @@
   <div class="log-panel-view" ref="panelRef" :style="{ marginTop: panelTopMargin + 'px' }">
     <div class="log-header">
       <div class="log-header-inner" ref="headerRef">
+        <div class="header-left">
+          <button class="log-delete-btn" @click="deleteSelected" title="删除记录">
+            <img :src="deleteIcon" alt="删除" />
+          </button>
+        </div>
         <div class="filter-center" role="button" @click="toggleFilter" :title="filterVisible ? '收起筛选' : '展开筛选'">
           <span class="filter-text">筛选</span>
           <img class="filter-icon" :src="filterIcon" alt="toggle" />
         </div>
         <div class="header-right">
-          <button class="log-delete-btn" @click="deleteSelected" title="删除记录">
-            <img :src="deleteIcon" alt="删除" />
-          </button>
-          <button class="log-btn" :disabled="trackLoading" @click="onRefresh" style="margin-left:8px">刷新</button>
+          <button class="log-btn log-btn-small" :disabled="trackLoading" @click="onRefresh">刷新</button>
         </div>
       </div>
       <div v-show="filterVisible" ref="filterRef" class="filter-panel">
@@ -124,7 +126,7 @@ const router = useRouter()
 const bulkCheckbox = ref(null)
 const user = ref(JSON.parse(localStorage.getItem('ride_user') || 'null'))
 const devicesList = ref([])
-const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
+const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8888'
 
 const allUsers = ref([])
 
@@ -488,9 +490,12 @@ watch([() => selectionStore.selected.slice(), () => filteredSegments.value.lengt
 .filter-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display:flex; align-items:center; gap:8px; cursor:pointer }
 .filter-text { font-weight: 600; color: #1976d2; font-size: 16px }
 .filter-icon { width:18px; height:18px }
-.header-right { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
+.header-left { position: absolute; left: 0; top: 50%; transform: translateY(-50%); display:flex; align-items:center; gap:8px; z-index:1002; }
+.header-right { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display:flex; align-items:center; gap:8px; }
 .log-delete-btn { background: transparent; border: none; padding: 6px; cursor: pointer }
 .log-delete-btn img { width:22px; height:22px }
+
+.log-btn-small { padding: 6px 10px; font-size: 14px; border-radius: 6px }
 
 .filter-panel {
   position: fixed;
@@ -595,18 +600,18 @@ watch([() => selectionStore.selected.slice(), () => filteredSegments.value.lengt
 }
 .log-seg-checkbox {
   position: absolute;
-  left: 30px; /* align with item padding-left */
-  top: 58px;
+  left: calc(10px - var(--left-col)); /* 向左微移 4px */
+  top: 50%;
   transform: translateY(-50%);
-  width: 0px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   z-index: 1100;
+  width: auto;
 }
-.log-seg-row { display:flex; align-items:center; justify-content:center; }
-.log-seg-time { width:100%; text-align:center }
+.log-seg-row { display:flex; align-items:center; justify-content:center; position:relative; }
+.log-seg-time { flex:1; text-align:center }
 .log-seg-checkbox input { transform: scale(1.12); accent-color: var(--checkbox-accent); }
 .log-seg-content { margin-left: calc(var(--left-col) + 0px); }
 .log-segment-item:last-child {
