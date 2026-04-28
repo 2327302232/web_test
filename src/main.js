@@ -21,6 +21,41 @@ import PointInfoPanel from './components/PointInfoPanel.vue'
 import { setPointPanel } from './composables/usePointPanel'
 import panelIcons from './lib/panelIcons'
 
+// Debug: wrap global fetch to log which backend URL the frontend actually requests.
+try {
+	if (typeof window !== 'undefined' && window.fetch) {
+		const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
+		console.info('[backend] frontend backendBase =', backendBase)
+		const _origFetch = window.fetch.bind(window)
+		window.fetch = async function(input, init) {
+			try {
+				let method = (init && init.method) || 'GET'
+				let reqUrl = ''
+				if (input && input.url) reqUrl = input.url
+				else reqUrl = String(input || '')
+
+				let resolved = reqUrl
+				try {
+					// resolve relative paths against backendBase so logs show actual network target
+					if (reqUrl && !/^[a-zA-Z]+:\/\//.test(reqUrl)) {
+						// treat leading '/' or 'api' or './' as backend-relative
+						resolved = new URL(reqUrl, backendBase).href
+					}
+				} catch (e) {
+					// fallback to original
+				}
+
+				console.debug(`[fetch] ${method} ${reqUrl} -> ${resolved}`)
+			} catch (e) {
+				try { console.debug('[fetch] log error', e) } catch (ee) {}
+			}
+			return _origFetch(input, init)
+		}
+	}
+} catch (e) {
+	// ignore in environments without window
+}
+
 const app = createApp(App)
 app.use(router)
 app.use(createPinia())

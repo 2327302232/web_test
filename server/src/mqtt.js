@@ -76,6 +76,10 @@ if (MQTT_CA_PATH) {
 const ackTimers = new Map(); // cmdId -> Timeout
 let client = null;
 let clientConnected = false;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY_MS = 60000;
+let manualStop = false;
 
 function safeJsonParse(buf) {
   try {
@@ -239,81 +243,133 @@ export async function startMqtt() {
   if (!MQTT_URL) throw new Error('MQTT_URL is required in process.env');
   if (client) return client;
 
-  const opts = {
+  // disable manual stop flag
+  manualStop = false;
+
+  const optsBase = {
     protocolVersion: 4,
     clientId: DEFAULT_CLIENT_ID,
     keepalive: 30,
     clean: false,
-    reconnectPeriod: reconnectPeriodMs,
+    // disable mqtt.js auto-reconnect: we implement controlled reconnect below
+    reconnectPeriod: 0,
     rejectUnauthorized,
     connectTimeout: 30000,
   };
-  if (MQTT_USERNAME) opts.username = MQTT_USERNAME;
-  if (MQTT_PASSWORD) opts.password = MQTT_PASSWORD;
-  if (caBuffer) opts.ca = caBuffer;
+  if (MQTT_USERNAME) optsBase.username = MQTT_USERNAME;
+  if (MQTT_PASSWORD) optsBase.password = MQTT_PASSWORD;
+  if (caBuffer) optsBase.ca = caBuffer;
 
-  client = mqtt.connect(MQTT_URL, opts);
-
-  client.on('connect', (connack) => {
-    clientConnected = true;
-    console.log('MQTT connected', MQTT_URL);
-    const prefix = MQTT_TOPIC_PREFIX;
-    client.subscribe(`${prefix}/+/telemetry/#`, { qos: qosTelemetry }, (err, granted) => {
-      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/telemetry/#` } });
-      else console.log('subscribed', granted);
-    });
-    client.subscribe(`${prefix}/+/events/#`, { qos: qosTelemetry }, (err, granted) => {
-      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/events/#` } });
-    });
-    client.subscribe(`${prefix}/+/ack`, { qos: 1 }, (err, granted) => {
-      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/ack` } });
-    });
-    client.subscribe(`${prefix}/+/status`, { qos: 1 }, (err, granted) => {
-      if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/status` } });
-    });
-  });
-
-  client.on('reconnect', () => {
-    console.log('MQTT reconnecting');
-    emitter.emit('error', { error: new Error('mqtt reconnect'), context: {} });
-  });
-
-  client.on('offline', () => {
-    clientConnected = false;
-    console.log('MQTT offline');
-  });
-
-  client.on('close', () => {
-    clientConnected = false;
-    console.log('MQTT connection closed');
-  });
-
-  client.on('error', (err) => {
-    emitter.emit('error', { error: err, context: { where: 'mqtt client' } });
-  });
-
-  client.on('message', (topic, payload, packet) => {
+  function cleanupClient() {
+    if (!client) return;
     try {
-      routeMessage(topic, payload);
-    } catch (err) {
-      emitter.emit('error', { error: err, context: { topic } });
-    }
-  });
+      client.removeAllListeners();
+    } catch (e) {}
+    try {
+      client.end(true);
+    } catch (e) {}
+    client = null;
+    clientConnected = false;
+  }
 
+  function scheduleReconnect(reason) {
+    if (manualStop) return;
+    if (reconnectTimer) return; // already scheduled
+    reconnectAttempts = reconnectAttempts + 1;
+    const delay = Math.min(reconnectPeriodMs * reconnectAttempts, MAX_RECONNECT_DELAY_MS);
+    console.log('MQTT schedule reconnect in', delay, 'ms', reason && reason.message ? reason.message : reason);
+    emitter.emit('error', { error: new Error('mqtt schedule reconnect'), context: { reason } });
+    // ensure previous client closed
+    try { cleanupClient(); } catch (e) {}
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      doConnect();
+    }, delay);
+  }
+
+  function doConnect() {
+    if (client) {
+      // if already connected, no op
+      if (clientConnected) return client;
+      try { cleanupClient(); } catch (e) {}
+    }
+
+    const opts = Object.assign({}, optsBase);
+    client = mqtt.connect(MQTT_URL, opts);
+
+    client.on('connect', (connack) => {
+      clientConnected = true;
+      reconnectAttempts = 0;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      console.log('MQTT connected', MQTT_URL);
+      const prefix = MQTT_TOPIC_PREFIX;
+      client.subscribe(`${prefix}/+/telemetry/#`, { qos: qosTelemetry }, (err, granted) => {
+        if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/telemetry/#` } });
+        else console.log('subscribed', granted);
+      });
+      client.subscribe(`${prefix}/+/events/#`, { qos: qosTelemetry }, (err, granted) => {
+        if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/events/#` } });
+      });
+      client.subscribe(`${prefix}/+/ack`, { qos: 1 }, (err, granted) => {
+        if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/ack` } });
+      });
+      client.subscribe(`${prefix}/+/status`, { qos: 1 }, (err, granted) => {
+        if (err) emitter.emit('error', { error: err, context: { action: 'subscribe', topic: `${prefix}/+/status` } });
+      });
+    });
+
+    client.on('offline', () => {
+      clientConnected = false;
+      console.log('MQTT offline');
+    });
+
+    client.on('close', () => {
+      clientConnected = false;
+      console.log('MQTT connection closed');
+      scheduleReconnect(new Error('close'));
+    });
+
+    client.on('error', (err) => {
+      emitter.emit('error', { error: err, context: { where: 'mqtt client' } });
+      // ensure we attempt a reconnect after cleaning up
+      scheduleReconnect(err);
+    });
+
+    client.on('message', (topic, payload, packet) => {
+      try {
+        routeMessage(topic, payload);
+      } catch (err) {
+        emitter.emit('error', { error: err, context: { topic } });
+      }
+    });
+
+    return client;
+  }
+
+  // initial connect
+  doConnect();
   return client;
 }
 
 export function stopMqtt() {
+  manualStop = true;
+  try {
+    if (reconnectTimer) {
+      try { clearTimeout(reconnectTimer); } catch (e) {}
+      reconnectTimer = null;
+    }
+  } catch (e) {}
+
   if (!client) return;
   try {
-    client.end(true, () => {
-      client = null;
-      clientConnected = false;
-      emitter.emit('status', { deviceId: null, online: false, ts: Date.now(), raw: null });
-    });
-  } catch (e) {
-    emitter.emit('error', { error: e, context: { where: 'stopMqtt' } });
-  }
+    client.removeAllListeners();
+  } catch (e) {}
+  try {
+    client.end(true);
+  } catch (e) { emitter.emit('error', { error: e, context: { where: 'stopMqtt.end' } }); }
+  client = null;
+  clientConnected = false;
+  try { emitter.emit('status', { deviceId: null, online: false, ts: Date.now(), raw: null }); } catch (e) {}
 
   // 清理 ackTimers
   for (const [cmdId, t] of ackTimers.entries()) {
