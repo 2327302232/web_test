@@ -24,7 +24,7 @@ import panelIcons from './lib/panelIcons'
 // Debug: wrap global fetch to log which backend URL the frontend actually requests.
 try {
 	if (typeof window !== 'undefined' && window.fetch) {
-		const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'
+		const backendBase = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8888'
 		console.info('[backend] frontend backendBase =', backendBase)
 		const _origFetch = window.fetch.bind(window)
 		window.fetch = async function(input, init) {
