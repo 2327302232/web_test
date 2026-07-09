@@ -8,6 +8,7 @@ Windows MQTT 设备模拟器（Python 版）
 - 支持手动上报 telemetry（可带碰撞字段）、手动发送 events/collision 或 events/sos。
 - 支持运行时修改经纬度、电量、心率、温度、湿度、速度、方向、高度、精度等字段。
 - 支持定时自动发送 telemetry，便于在开发过程中持续产生数据。
+- 新增：支持 `real` 指令，使用 location.txt 中的点位依次发送 telemetry（模拟真实轨迹）。
 
 不依赖原始开发板代码，直接可在 Windows 上运行。
 """
@@ -26,7 +27,7 @@ from typing import Any, Dict, Optional
 
 import paho.mqtt.client as mqtt
 
-TIME_OFFSET_MS = 38000000
+TIME_OFFSET_MS = 410000000
 
 
 def now_ms() -> int:
@@ -46,18 +47,18 @@ def to_bool(value: Any) -> bool:
 @dataclass
 class SimState:
     device_id: str
-    lng: float = 113.398744
-    lat: float = 23.034911
-    speed: float = 0.0
+    lng: float = 113.395969
+    lat: float = 23.033731
+    speed: float = 16.2
     heading: float = 90.0
     altitude: float = 30.0
     accuracy: float = 5.0
     heart_rate: float = 95.0
     temperature: float = 31.6
     humidity: float = 61.2
-    battery: int = 89
+    battery: int = 71
     low_power: bool = False
-    location_source: str = "lbs"
+    location_source: str = "gnss"
     collision_score: float = 3.8
     collision_level: str = "high"
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -168,6 +169,9 @@ class PythonHelmetSimulator:
         self.auto_telemetry = not args.no_auto_telemetry
         self.auto_interval = max(1.0, float(args.telemetry_interval))
         self.telemetry_topic_suffix = args.telemetry_topic
+        self.replay_active = False
+        self.random_enabled = True
+        self._replay_thread: Optional[threading.Thread] = None
         self._telemetry_thread = threading.Thread(target=self._auto_send_telemetry_loop, daemon=True)
         self._cmd_worker_thread = threading.Thread(target=self._cmd_worker_loop, daemon=True)
         self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
@@ -183,6 +187,7 @@ class PythonHelmetSimulator:
     def stop(self) -> None:
         self._stop.set()
         self.running = False
+        self.replay_active = False
         if self._mqtt is not None:
             try:
                 self._mqtt.disconnect()
@@ -378,8 +383,20 @@ class PythonHelmetSimulator:
                 cmd_id=cmd_id,
             )
 
+    def _apply_random_fluctuation(self, payload: Dict[str, Any]) -> None:
+        """对 temperature、humidity、speed 应用 ±3 随机波动（保留 1 位小数），heart_rate 应用 ±20 随机波动（整数）"""
+        for key in ("temperature", "humidity", "speed"):
+            base = payload.get(key)
+            if base is not None:
+                payload[key] = round(random.uniform(base - 3, base + 3), 1)
+        base_hr = payload.get("heart_rate")
+        if base_hr is not None:
+            payload["heart_rate"] = int(random.uniform(base_hr - 20, base_hr + 20))
+
     def _send_telemetry(self, collision: bool = False, event: Optional[str] = None) -> None:
         body = self.state.telemetry_payload(collision=collision, event=event)
+        if self.random_enabled:
+            self._apply_random_fluctuation(body)
         topic = f"{self._topic_telemetry}"
         if self.telemetry_topic_suffix:
             suffix = self.telemetry_topic_suffix.strip("/")
@@ -415,6 +432,75 @@ class PythonHelmetSimulator:
                 self._send_telemetry()
             time.sleep(self.auto_interval)
 
+    # ==================== 新增 real 功能 ====================
+    def _load_locations(self, filename: str = "location.txt") -> list[tuple[float, float]]:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(script_dir, filename)
+        locs: list[tuple[float, float]] = []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(",")
+                    if len(parts) >= 2:
+                        lng = float(parts[0].strip())
+                        lat = float(parts[1].strip())
+                        locs.append((lng, lat))
+            print(f"[REAL] 已加载 {len(locs)} 个点位 from {path}")
+        except Exception as exc:
+            print(f"[REAL] 加载 {path} 失败: {exc}")
+        return locs
+
+    COLLISION_LNG = 113.393644
+    COLLISION_LAT = 23.033092
+
+    def _replay_loop(self, interval: float) -> None:
+        locs = self._load_locations()
+        if not locs:
+            print("[REAL] 无点位可回放")
+            self.replay_active = False
+            return
+        collision_triggered = False
+        for idx, (lng, lat) in enumerate(locs):
+            if self._stop.is_set() or not self.replay_active:
+                break
+            self.state.set_field("lng", lng)
+            self.state.set_field("lat", lat)
+            self._send_telemetry()
+            print(f"[REAL] 发送点位 #{idx + 1}/{len(locs)}: lng={lng}, lat={lat}")
+            # 检查是否到达碰撞触发点
+            if not collision_triggered and abs(lng - self.COLLISION_LNG) < 0.0001 and abs(lat - self.COLLISION_LAT) < 0.0001:
+                self._send_telemetry(collision=True)
+                self._send_event("collision", in_payload=False)
+                collision_triggered = True
+                print(f"[REAL] ⚠ 碰撞事件已触发！")
+            if idx < len(locs) - 1:
+                time.sleep(interval)
+        self.replay_active = False
+        print(f"[REAL] 回放结束，共发送 {min(idx + 1, len(locs))} 个点位")
+
+    def _handle_real(self, args: list[str]) -> None:
+        if self.replay_active:
+            print("[REAL] 已在回放中，输入 real stop 停止")
+            return
+        if args and args[0].lower() == "stop":
+            self.replay_active = False
+            print("[REAL] 已请求停止回放")
+            return
+
+        try:
+            interval = float(args[0]) if args else 1.0
+        except ValueError:
+            interval = 1.0
+
+        self.replay_active = True
+        self._replay_thread = threading.Thread(target=self._replay_loop, args=(interval,), daemon=True)
+        self._replay_thread.start()
+        print(f"[REAL] 开始按 location.txt 回放，间隔 {interval}s（输入 real stop 停止）")
+
+    # ==================== 命令行交互 ====================
     def _handle_set(self, args: list[str]) -> None:
         if len(args) < 2:
             print("set 用法: set <field> <value>")
@@ -472,6 +558,8 @@ class PythonHelmetSimulator:
         print(f"collision_score: {s['collision_score']}, collision_level: {s['collision_level']}")
         print(f"auto telemetry: {'on' if self.auto_telemetry else 'off'} @ {self.auto_interval:.1f}s | topic_suffix: {self.telemetry_topic_suffix}")
         print(f"reply mode: {self.reply_mode}")
+        print(f"replay active: {self.replay_active}")
+        print(f"random fluctuation: {'on' if self.random_enabled else 'off'}")
 
     def _help(self) -> None:
         print("""
@@ -489,6 +577,9 @@ class PythonHelmetSimulator:
   interval <seconds>        设置自动上报间隔
   topic <suffix>           设置 telemetry 主题后缀（如 gnss / lbs / ''）
   sendall                   发送一次 telemetry + 发送一次低功耗状态
+  random [on|off]          开启/关闭随机波动：温度/湿度/速度±3(1位小数)、心率±20(整数)
+  real [interval]          使用 location.txt 点位依次发送 telemetry（默认间隔 1s）
+  real stop                停止 real 回放
   flush                     清空最近发送/接收命令日志
   log                       打印最近 30 条 MQ 消息收发记录
   q/quit/exit              退出
@@ -575,6 +666,16 @@ class PythonHelmetSimulator:
                 self._send_telemetry()
                 self._send_status(online=True, status="ok", message="manual sendall")
                 print("已发送 telemetry + status")
+            elif cmd == "random":
+                if not args:
+                    print(f"random: {'on' if self.random_enabled else 'off'}")
+                elif args[0].lower() in {"on", "off"}:
+                    self.random_enabled = args[0].lower() == "on"
+                    print(f"random fluctuation: {'on' if self.random_enabled else 'off'}")
+                else:
+                    print("random 参数错误：on/off")
+            elif cmd == "real":
+                self._handle_real(args)
             elif cmd == "flush":
                 self._command_log = []
                 print("日志已清空")
